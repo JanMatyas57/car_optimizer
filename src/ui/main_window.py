@@ -606,7 +606,7 @@ class MainWindow(QMainWindow):
         elif res.kind == "endurance_strategy":
         
             if hasattr(self, 'laptime_map_plot') and self.laptime_map_plot is not None:
-                # res je vlastně SolverPayload, takže ho můžeme předat jako slovník s atributy
+                
                 payload_dict = {
                     'data': res.data,
                     'meta': res.meta

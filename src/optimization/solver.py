@@ -197,7 +197,7 @@ class MassPointSolver:
 
         energy_consumed = (F_acc * ds) / self.car.power_eff
         
-        energy_saved = P_recuperated * self.car.regen_eff * (ds / v_k)
+        energy_saved = P_recuperated * self.car.regen_eff * (ds / v_k) * 0.94 #0.94 is fixed regen factor extracted from data
        
         dE_step = energy_consumed - energy_saved
 
@@ -1196,7 +1196,7 @@ class StrategyMaker:
                 "max_iter": 5000, 
                 "tol": 1e-3,                   
                 "acceptable_tol": 1e-2,           
-                "print_level": 5,
+                "print_level": 0,
                 "hessian_approximation": "limited-memory"
             }
             opti.solver('ipopt', p_opts, s_opts)

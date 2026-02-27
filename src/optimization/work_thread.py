@@ -76,8 +76,10 @@ class SolverWorker(QThread):
             drs_usage=init_guess['drs_usage']
         )
         '''
+        
         # solver
         res = self.solver.solveLap(init_cond, ds=self.ds,init_guess=init_guess)
+
         
         if not res.success:
             raise Exception("Optimization failed for single lap.")
@@ -110,7 +112,7 @@ class SolverWorker(QThread):
                     
                     points = self.solver.getPoints(regen_target, e_target, delta_target, ef_min, t_min)
                     points_grid[i, j, k] = points
-                    print(f"points:{points}")
+                  
 
         points_interpolant = RegularGridInterpolator(
             (e_targets, regen_targets, delta_targets), 
@@ -122,6 +124,8 @@ class SolverWorker(QThread):
 
         print(f"Ef min guess {ef_min:.2f}")
         print(f"time min guess: {t_min:.2f}")
+        print(f"Car regen: {self.car.regen_eff}")
+        print(f"Delta {self.car.performance_delta}")
 
     
         res = self.solver.solve(ef_min,t_min)
