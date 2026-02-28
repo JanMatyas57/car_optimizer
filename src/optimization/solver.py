@@ -59,11 +59,12 @@ class Scales:
     L = 1000.0       # Délka (m)    
 
 class MassPointSolver:
-    def __init__(self,car,track,laps=1):
+    def __init__(self,car,track,rk4=False,laps=1):
 
         self.car = car
         self.track = track
         self.laps = laps
+        self.rk4 = rk4
   
 
     def solveLap(self, init_cond: InitConditions, init_guess=None, ds=0.5):
@@ -267,6 +268,271 @@ class MassPointSolver:
         # =========================
         # Initial guess
         # =========================
+        opti.set_initial(v, 15.0)
+        opti.set_initial(F_acc, 100.0)
+
+        # =========================
+        # Solver setup
+        # =========================
+        p_opts = {"expand": True}
+        s_opts = {"max_iter": 5600, "tol": 1e-2, "print_level": 5}
+
+        opti.solver("ipopt", p_opts, s_opts)
+
+        try:
+            sol = opti.solve()
+
+            # =========================
+            # Sensitivity analysis
+            # =========================
+            L = opti.f + ca.dot(opti.lam_g, opti.g)
+
+            sens_m   = sol.value(ca.jacobian(L, p_mass))
+            sens_cl  = sol.value(ca.jacobian(L, p_cl))
+            sens_cd  = sol.value(ca.jacobian(L, p_cd))
+            sens_mux = sol.value(ca.jacobian(L, p_mu_x))
+            sens_muy = sol.value(ca.jacobian(L, p_mu_y))
+
+            print("sensitivity results")
+            print(f"Mass: {sens_m:+.4f} s/kg")
+            print(f"CL:   {sens_cl:+.4f} s/unit")
+            print(f"CdA:  {sens_cd:+.4f} s/unit")
+
+            return SolverResults(
+                success=True,
+                lap_time=sol.value(T[-1]),
+                t=sol.value(T),
+                v=sol.value(v),
+                s=s_sim,
+                E=sol.value(E),
+                SoC=sol.value(SoC)*100,
+                f_acc=sol.value(F_acc) / self.car.power_eff,
+                f_brake=sol.value(F_brake),
+                recuperation=sol.value(P_recuperated*self.car.regen_eff),
+                drs_usage=sol.value(drs_ef),
+                sens={
+                    "dTime_dm": sens_m,
+                    "dTime_dCL": sens_cl,
+                    "dTime_dCdA": sens_cd,
+                    "dTime_dMuX": sens_mux,
+                    "dTime_dMuY": sens_muy
+                }
+            )
+
+        except RuntimeError as e:
+            print(f"Solver failed: {e}")
+            return SolverResults(False, 0, [], [], [], [], [], [], {})
+        
+    def solveLap_rk4(self, init_cond: InitConditions, init_guess=None, ds=0.5):
+
+        opti = ca.Opti()
+
+        # =========================
+        # Parameters
+        # =========================
+        p_mass = opti.parameter()
+        p_cl   = opti.parameter()
+        p_cd   = opti.parameter()
+        p_mu_x = opti.parameter()
+        p_mu_y = opti.parameter()
+
+        # Set params values
+        opti.set_value(p_mass, self.car.mass)
+        opti.set_value(p_cl,   self.car.cl)
+        opti.set_value(p_cd,   self.car.cd)
+        opti.set_value(p_mu_x, self.car.mu_x)
+        opti.set_value(p_mu_y, self.car.mu_y)
+
+        # =========================
+        # Track data
+        # =========================
+        total_length = self.track.length
+        N = int(np.round(total_length / ds))
+
+        s_sim = np.linspace(0, total_length, N + 1)
+        ds = s_sim[1:] - s_sim[:-1]
+
+        kappa_grid = self.track.get_curvature(s_sim)
+
+        # =========================
+        # States
+        # =========================
+        v = opti.variable(N + 1)   # speed [m/s]
+        T = opti.variable(N + 1)   # time [s]
+        E = opti.variable(N + 1)   # energy used [kWh]
+        
+        # =========================
+        # Inputs
+        # =========================
+        F_acc   = opti.variable(N)   # Gas [N]
+        F_brake_mech = opti.variable(N)
+        F_brake_regen = opti.variable(N)
+        F_brake = F_brake_mech + F_brake_regen
+        drs     = opti.variable(N)
+
+        
+        # =========================
+        # DRS
+        # =========================
+        if self.car.drs_allowed and self.track.drs is not None:
+            drs_flag = self.track.get_drs_flag(s_sim[:-1])
+            drs_ef = drs * drs_flag
+            cl_eff = p_cl + drs_ef * (self.car.cl_drs - p_cl)
+            cd_eff = p_cd + drs_ef * (self.car.cd_drs - p_cd)
+        else:
+            drs_ef = ca.DM.zeros(N)
+            cl_eff = p_cl
+            cd_eff = p_cd
+
+        opti.subject_to(drs >= 0)
+        opti.subject_to(drs <= 1)
+
+        # Current speed (k)
+        v_k = v[:-1]
+
+        # =========================
+        # Aero
+        # =========================
+        F_drag = Car.get_aero_drag(self.car, v_k, cd=cd_eff)
+
+        F_max_x, F_max_y = Car.get_friction_limit(
+            self.car, v_k,
+            mass=p_mass,
+            mu_x=p_mu_x,
+            mu_y=p_mu_y,
+            cl=cl_eff
+        )
+
+        # Lateral Force: F_lat = m * v^2 * curvature
+        F_lat = p_mass * v_k**2 * ca.fabs(kappa_grid[:-1])
+
+        # Longitudinal force
+        F_long_k = F_acc + F_brake
+
+        # =========================
+        # Pedal constraints
+        # =========================
+        opti.subject_to(F_acc >= 0)
+        opti.subject_to(F_brake_regen <= 0)
+        opti.subject_to(F_brake_mech <= 0)
+
+        # =========================
+        # Friction ellipse
+        # =========================
+        term_long = (F_long_k / F_max_x)**2
+        term_lat  = (F_lat    / F_max_y)**2
+        opti.subject_to(term_long + term_lat <= 1)
+
+        #SoC
+        E_left = self.car.acp_capacity - E[:-1]
+        SoC = E_left/self.car.acp_capacity
+
+        # Recuperation limit at given SoC
+        recuperation_max = self.car.get_recuperation_limit(SoC)
+
+        P_recuperated = -F_brake_regen*v_k
+
+        opti.subject_to(P_recuperated/recuperation_max <= 1)
+        opti.subject_to((-F_brake_mech*v_k)/self.car.brake_max <= 1)
+        opti.subject_to(F_brake/self.car.brake_max <= 1)
+
+        # =========================
+        # Dynamics (RK4 Integration)
+        # =========================
+        # Pomocná funkce pro získání derivací stavů podle dráhy 's'
+        def get_derivatives(v_val):
+            # Odpor se průběžně mění s rychlostí uvnitř RK4 sub-kroků
+            f_drag_step = Car.get_aero_drag(self.car, v_val, cd=cd_eff)
+            f_net_step = F_long_k - f_drag_step
+            acc_step = f_net_step / p_mass
+            
+            dv_ds = acc_step / v_val
+            dT_ds = 1.0 / v_val
+            
+            # Změna energie dE/ds na 1 metr (nezávisí na v, rychlost z výkonu se tu zkrátí)
+            dE_ds = (F_acc / self.car.power_eff - (-F_brake_regen * self.car.regen_eff * 0.9)) / 3.6e6
+            
+            return dv_ds, dT_ds, dE_ds
+
+        # Výpočet koeficientů RK4 pro každý stav naráz (vektorizovaně přes CasADi graf)
+        k1_v, k1_T, k1_E = get_derivatives(v_k)
+        k2_v, k2_T, k2_E = get_derivatives(v_k + 0.5 * ds * k1_v)
+        k3_v, k3_T, k3_E = get_derivatives(v_k + 0.5 * ds * k2_v)
+        k4_v, k4_T, k4_E = get_derivatives(v_k + ds * k3_v)
+
+        # Přechod na další krok
+        v_next = v_k + (ds / 6.0) * (k1_v + 2*k2_v + 2*k3_v + k4_v)
+        T_next = T[:-1] + (ds / 6.0) * (k1_T + 2*k2_T + 2*k3_T + k4_T)
+        E_next = E[:-1] + (ds / 6.0) * (k1_E + 2*k2_E + 2*k3_E + k4_E)
+
+        opti.subject_to(v[1:] == v_next)
+        opti.subject_to(T[1:] == T_next)
+        opti.subject_to(E[1:] == E_next)
+
+        # =========================
+        # Torque limit (30 Nm per wheel)
+        # =========================
+        opti.subject_to(
+            ((self.car.wheel_radius * F_acc)) /
+            (self.car.max_torque * self.car.gear_ratio * 4) < 1
+        )
+
+        # =========================
+        # Power limit
+        # =========================
+
+        P_out = (F_acc * v_k) / self.car.power_eff
+
+        # Limit from SoC (dynamic)
+        P_max_dynamic = self.car.soc_to_power_interp(SoC)
+        opti.subject_to(P_out <= P_max_dynamic)
+
+        # Hard limit
+        opti.subject_to(P_out <= self.car.power_max)
+
+        # Bounding SoC
+        opti.subject_to(SoC >= 0.0)
+
+        # Speed limits
+        opti.subject_to(v >= 1.0)  # avoid division by zero
+
+        # =========================
+        # Initial conditions
+        # =========================
+        opti.subject_to(v[0] == init_cond.v)
+        opti.subject_to(T[0] == init_cond.T)
+        opti.subject_to(E[0] == init_cond.E)
+        
+        opti.subject_to(drs[0] == 0)  # start with DRS closed
+
+        # =========================
+        # Energy limitation
+        # =========================
+   
+        if self.car.energy_limit is not None:
+            opti.subject_to(E[-1]-init_cond.E <= self.car.energy_limit)
+
+        # =========================
+        # Objective function
+        # =========================
+        J_Time = T[-1]
+
+        F_norm_factor = (self.car.mass * self.car.g)**2
+        J_overlap = 0.004 * ca.sum1((F_acc * -F_brake) / F_norm_factor)
+
+        J_final_v = 0.1 * v[-1]
+
+        J_drs_binary = 0.002 * ca.sum1(drs * (1 - drs))
+
+        opti.minimize(J_Time + J_overlap - J_final_v)
+
+        # =========================
+        # Initial guess
+        # =========================
+        if init_guess is not None:
+             # Doporučuju časem využívat předaný init_guess, zatím tu máš hardcoded 15.0
+             pass
+             
         opti.set_initial(v, 15.0)
         opti.set_initial(F_acc, 100.0)
 
@@ -1104,54 +1370,61 @@ class StrategyMaker:
         return Endurance_points + Efficiency_points
 
 
-
-
-        
-
-
-    def solve(self,ef_min,T_min,soc_start = 1.0):
+    def solve(self,ef_min=0,T_min=0,objective="points",enforce_full_soc = False,):
             opti = ca.Opti()
             N = self.laps
 
             E_lap = opti.variable(N)
-            E_total = opti.variable(N+1)
+
+            
+            SoC_start = opti.variable()
+
+            if enforce_full_soc:
+                opti.subject_to(SoC_start == 0.99)
+        
             
             # Stav baterie (SoC) na začátku každého kola + na úplném konci závodu (N+1)
             SoC = opti.variable(N + 1)    
 
-            MIN_SOC = 0.1 
+            MIN_SOC = 0.11
 
             # ==========================================
             # 3. Počáteční podmínky
             # ==========================================
-            opti.subject_to(SoC[0] == soc_start) 
-            opti.subject_to(E_total[0] == 0)
+            opti.subject_to(SoC[0] == SoC_start) 
+        
 
             total_time = 0
             
             for k in range(N):
             
                 opti.subject_to(SoC[k+1] == SoC[k] - (E_lap[k] / self.car.acp_capacity))
-                opti.subject_to(E_total[k+1] == E_total[k] + E_lap[k])
-            
-
+               
                 state_vec = ca.vertcat(SoC[k], E_lap[k], self.car.regen_eff)
-                lap_time = self.laptime_map(state_vec)
+                laptime = self.laptime_map(state_vec)
     
-                total_time += lap_time
+                total_time += laptime
 
 
     
             opti.subject_to(SoC >= MIN_SOC)
+            opti.subject_to(SoC_start >= 0.5)
+            opti.subject_to(SoC_start <= 0.99)
             #opti.subject_to(SoC <= 1.0)
             
         
-            opti.subject_to(E_lap >= 0.18) 
-            opti.subject_to(E_lap <= 0.3) 
-            #opti.subject_to(E_total[N+1] > 4)
-            #opti.subject_to(E_total[N+1] <6)
-        
+            opti.subject_to(E_lap >= 0.17) 
+            opti.subject_to(E_lap <= 0.4) 
 
+
+            # === INITIAL GUESS ===
+            E_guess = 0.25
+            opti.set_initial(E_lap, E_guess)
+            opti.set_initial(SoC_start, 1.0)
+            soc_guess = [1.0 - k * (E_guess / self.car.acp_capacity) for k in range(N + 1)]
+            opti.set_initial(SoC, soc_guess)
+           
+        
             # ==========================================
             # Konstanty pro výpočty 
             # ==========================================
@@ -1164,7 +1437,8 @@ class StrategyMaker:
             # ==========================================
             # Endurance Score
             # ==========================================
-            opti.subject_to(total_time <= T_max) 
+            if objective == "points":
+                opti.subject_to(total_time <= T_max) 
             
             nom_end = (T_max - total_time) / (T_max - T_min)
             Endurance_points = (P_max_end - P_min_end) * (nom_end**2) + P_min_end
@@ -1174,8 +1448,10 @@ class StrategyMaker:
             # ==========================================
             P_max_eff = 75.0
             EF_max = 2 * ef_min
-            Ef_team = (total_time**2) * E_total[N]
-            opti.subject_to(Ef_team <= EF_max)
+            Ef_team = (total_time**2) * ca.sum1(E_lap)
+
+            if objective == "points":
+                opti.subject_to(Ef_team <= EF_max)
 
             nom_eff = (EF_max - Ef_team) / (EF_max - ef_min)
             Efficiency_points = P_max_eff * (nom_eff**2)
@@ -1185,9 +1461,15 @@ class StrategyMaker:
             # ==========================================
             Total_points = Endurance_points + Efficiency_points
             
-        
-            opti.minimize(-Total_points)
+            if objective == "points":
+                opti.minimize(-Total_points)
 
+            elif objective == "time":
+                opti.minimize(total_time)
+
+            elif objective == "efficiency":
+                opti.minimize(Ef_team)
+            
             # ==========================================
             # 8. Solver settings
             # ==========================================
@@ -1206,56 +1488,55 @@ class StrategyMaker:
                 sol = opti.solve()
                 
                 print(f"Celkový čas: {sol.value(total_time):.2f} s")
-                print(f"Energy used {sol.value(E_total[N])}")
                 
                 # Extrakce optimálních hodnot
                 opt_soc = sol.value(SoC)
                 opt_e_targets = sol.value(E_lap)
-                # POZOR: Převedeme na numpy pole pro jednodušší iteraci, pokud je to nutné
-                opt_lap_times = [float(sol.value(self.laptime_map(ca.vertcat(opt_soc[k], opt_e_targets[k], self.car.regen_eff)))) for k in range(N)]
+                
+                # Ošetření pro případ, že N=1 (CasADi vrací skalár místo pole)
+                if N == 1:
+                    opt_e_targets = [opt_e_targets]
+                    opt_soc = [opt_soc, sol.value(SoC)[1]]
+
+                opt_lap_times = []
+                
+               
+                for k in range(N):
+                    # Extrakce konkrétních hodnot pro toto kolo
+                    soc_k = float(opt_soc[k])
+                    e_k = float(opt_e_targets[k])
+                    regen_k = float(self.car.regen_eff)
+                    
+                    # Výpočet času na kolo z mapy
+                    lap_time_k = float(sol.value(self.laptime_map(ca.vertcat(soc_k, e_k, regen_k))))
+                    opt_lap_times.append(lap_time_k)
+                    
+                    # POKUD JE ČAS PODEZŘELE NÍZKÝ, VYPÍŠEME VSTUPY
+                    if lap_time_k < 60.0: # Nastavte podle reálného rekordu trati
+                        print(f"!!! ANOMÁLIE V KOLE {k+1} !!!")
+                        print(f"   Laptime: {lap_time_k:.2f} s")
+                        print(f"   Vstupy -> SoC_start: {soc_k:.4f}, E_lap: {e_k:.4f}, Regen: {regen_k:.2f}")
+
                 opt_total_time = sol.value(total_time)
 
-                # ==========================================
-                # VÝPOČET HEURISTICKÉHO BASELINU (Flat distribution)
-                # ==========================================
-                total_energy_used = sol.value(E_total[N])
-                e_flat = total_energy_used / N  # Rovnoměrné rozložení energie
-                
-                flat_lap_times = []
-                flat_soc = [soc_start]
-                current_soc = soc_start
-                
-                for k in range(N):
-                    # Získání času na kolo pro daný konstantní target a klesající SoC
-                    state_vec = ca.vertcat(current_soc, e_flat, self.car.regen_eff)
-                    lap_time_flat = float(sol.value(self.laptime_map(state_vec)))
-                    flat_lap_times.append(lap_time_flat)
-                    
-                    # Update SoC pro další kolo
-                    current_soc -= (e_flat / self.car.acp_capacity)
-                    flat_soc.append(current_soc)
-                
-                flat_total_time = sum(flat_lap_times)
-                time_saved = flat_total_time - opt_total_time
+                if opt_total_time < T_min:
+                    print("Závod byl odjet rychleji než je povolené T_min, vracím False.")
+                    return {"success": False}
 
                 return {
                     "success": True,
                     "total_time": opt_total_time,
-                    "flat_total_time": flat_total_time,
-                    "time_saved": time_saved,
                     "e_targets": opt_e_targets,     
-                    "soc_profile": opt_soc,     
+                    "soc_profile": opt_soc,
+                    "soc_start": sol.value(SoC_start),
                     "lap_times": opt_lap_times,
-                    "flat_e_targets": [e_flat] * N,
-                    "flat_soc_profile": flat_soc,
-                    "flat_lap_times": flat_lap_times,
-                    "points": sol.value(Total_points)
+                    "points": sol.value(Total_points),
+                    "ef_score": sol.value(Ef_team)
                 }
                 
             except RuntimeError as e:
                 print(f"Solver failed: {e}")
-                print("Last known E_targets:", opti.debug.value(E_lap))
-                print("Last known SoC:", opti.debug.value(SoC))
+                opti.debug.show_infeasibilities()
                 return {"success": False}
 
        

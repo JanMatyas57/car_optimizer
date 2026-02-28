@@ -12,7 +12,7 @@ from src.core.track import Track
 from  src.core.trackGenerator import TrackGenerator
 from src.core.car import Car
 from src.optimization.solver import MassPointSolver, MPCC_Solver, SingleTrackSolver, StrategyMaker
-from src.optimization.work_thread import SolverWorker, MODE_ACP_TEST, MODE_ENDURANCE, MODE_SINGLE, MODE_STRATEGY_OPT
+from src.optimization.work_thread import SolverWorker, MODE_ACP_TEST, MODE_ENDURANCE, MODE_SINGLE, MODE_STRATEGY_OPT, MODE_DEPLOYMENT_OPT
 from src.optimization.track_generation_thread import TrackGenerationWorker
 from src.ui.results_window import ResultsWindow
 from src.ui.endurance_results import EnduranceResultsWindow
@@ -156,8 +156,8 @@ class MainWindow(QMainWindow):
         layout = QFormLayout()
 
         self.combo_model = QComboBox()
-        self.combo_model.addItem("Mass point (fixed line)", "mass_point")
-        self.combo_model.addItem("Mass point (free line)", "mass_point_mpcc")
+        self.combo_model.addItem("Mass point (Euler)", "mass_point")
+        self.combo_model.addItem("Mass point (Rk4)", "mass_point_rk4")
         self.combo_model.addItem("Single track", "single_track")
 
     
@@ -244,7 +244,7 @@ class MainWindow(QMainWindow):
         group.setLayout(layout)
         self.control_layout.addWidget(group)
 
-    def create_solver(self,car, track, endurance=False, laps=1):
+    def create_solver(self,car, track, laps=1):
         """
         Creates the correct solver based on car configuration.
         """
@@ -252,15 +252,15 @@ class MainWindow(QMainWindow):
             return SingleTrackSolver(car, track, laps=laps)
             
         elif car.model_type == "mass_point":
-            return MassPointSolver(car, track, laps=laps)
+            return MassPointSolver(car, track,rk4=False, laps=laps)
         
-        elif car.model_type == "mass_point_mpcc":
-            return MPCC_Solver(car,track,laps=laps)
+        elif car.model_type == "mass_point_rk4":
+            return MassPointSolver(car, track,rk4=True, laps=laps)
             
         else:
             # Fallback
             print(f"⚠️ Unknown model type '{car.model_type}', defaulting to MassPoint.")
-            return MassPointSolver(car, track, endurance=endurance, laps=laps)
+            return MassPointSolver(car, track, laps=laps)
 
     # ==========================================
     # DATA LOADING & TRACK PLOTTING
@@ -427,11 +427,12 @@ class MainWindow(QMainWindow):
        
         try:
             track_name = self.combo_track.currentText()
-            name = track_name+"_laptime_map"
+            name = track_name+"_laptime_map2"
             tracks_dir="data/tracks/lapmaps"
             filepath = os.path.join(tracks_dir, f"{name}.npz")
             self.laptime_map_plot = LaptimeAppMainWindow(filepath)
             self.laptime_map_plot.optimization_requested.connect(self.start_strategy_optimization)
+            self.laptime_map_plot.deployment_requested.connect(self.run_deployment)
             self.laptime_map_plot.show()
 
 
@@ -450,7 +451,7 @@ class MainWindow(QMainWindow):
 
         solver = StrategyMaker(car,laptime_interpolant,laps_count)
 
-        self.loading_overlay.show_loading("Optimizing strategy...", indefinite=True)
+        self.loading_overlay.show_loading("Optimizing strategy...", indefinite=True,progress_text_fmt="Solving grid points ({} / {})")
         
         # Vytvoříme worker s novým módem
         self.ds_used = self.input_ds.value()
@@ -461,6 +462,30 @@ class MainWindow(QMainWindow):
         
         self.connect_worker_signals()
         self.worker.start()
+
+
+    def run_deployment(self,regen_val,delta_val,map_data):
+
+        
+        car = Car.from_ui_widget(self)
+        laps_count = self.input_laps.value()
+        
+        laptime_interpolant = map_data['interpolant']
+        solver = StrategyMaker(car, laptime_interpolant, laps_count)
+
+        self.loading_overlay.show_loading("Calculating lap deployment...", indefinite=True)
+        
+        self.ds_used = self.input_ds.value()
+        car.regen_eff = regen_val
+        car.performance_delta = delta_val
+     
+        # ZMĚNA ZDE: mode=MODE_DEPLOYMENT_OPT
+        self.worker = SolverWorker(solver, car, None, self.ds_used, mode=MODE_DEPLOYMENT_OPT, laps=laps_count)
+        
+        self.connect_worker_signals()
+        self.worker.start()
+
+    
 
         
 
@@ -497,6 +522,8 @@ class MainWindow(QMainWindow):
         self.worker.finished.connect(self.on_solver_finished)
         self.worker.error.connect(self.on_solver_error)
         self.worker.progress.connect(self.loading_overlay.update_progress)
+        self.worker.progress.connect(self.laptime_map_plot.loading_overlay.update_progress)
+        
 
     def on_create_track_clicked(self):
         """
@@ -603,15 +630,15 @@ class MainWindow(QMainWindow):
             self.sens_plotter.open_windows()
             return
         
-        elif res.kind == "endurance_strategy":
+        elif res.kind == "endurance_map":
         
             if hasattr(self, 'laptime_map_plot') and self.laptime_map_plot is not None:
-                
-                payload_dict = {
-                    'data': res.data,
-                    'meta': res.meta
-                }
-                self.laptime_map_plot.add_result_tab(payload_dict)
+                self.laptime_map_plot.add_result_tab(res)
+            return
+    
+        elif res.kind == "endurance_deployment":
+            if hasattr(self, 'laptime_map_plot') and self.laptime_map_plot is not None:
+                self.laptime_map_plot.add_result_tab(res)
             return
         
         else:
@@ -628,71 +655,4 @@ class MainWindow(QMainWindow):
     def on_compare_clicked(self):
         self.compare_window = CompareWindow()
         self.compare_window.show()
-    '''
-    def show_acp_plot(self, results):
-        """Creates strategy analysis window."""
-        results.sort(key=lambda x: x.E[-1])
-
-        times = np.array([r.lap_time for r in results])
-        energies_kwh = np.array([r.E[-1] - r.E[0] for r in results])
-        
-        # --- POINTS CALCULATION (FSG RULES) ---
-        T_min = np.min(times)
-        T_max = T_min * 1.333
-        denom = (T_max / T_min) - 1
-        
-        p_endurance = []
-        for t in times:
-            if t > T_max: p_endurance.append(0)
-            else: p_endurance.append(250 * ((T_max / t) - 1) / denom)
-        p_endurance = np.array(p_endurance)
-
-        eff_metric = energies_kwh * (times**2)
-        metric_best = np.min(eff_metric)
-        metric_worst = np.max(eff_metric)
-        
-        if metric_worst != metric_best:
-            p_efficiency = 75 * (1 - (eff_metric - metric_best) / (metric_worst - metric_best))
-        else:
-            p_efficiency = np.full_like(eff_metric, 75)
-
-        p_total = p_endurance + p_efficiency
-        opt_idx = np.argmax(p_total)
-        opt_energy = energies_kwh[opt_idx]
-        opt_score = p_total[opt_idx]
-
-        # --- PLOTTING ---
-        self.acp_window = pg.GraphicsLayoutWidget(show=True, title="ACP Strategy Analysis")
-        self.acp_window.resize(1200, 900)
-        self.acp_window.setBackground('w')
-
-        # 1. Trade-off Curve
-        p1 = self.acp_window.addPlot(title="Lap Time vs Energy Used")
-        p1.setLabel('left', 'Lap Time', units='s')
-        p1.setLabel('bottom', 'Energy Used', units='kWh')
-        p1.plot(energies_kwh, times, pen=pg.mkPen('b', width=3), symbol='o', symbolBrush='b')
-        p1.plot([opt_energy], [times[opt_idx]], symbol='x', symbolSize=20, symbolBrush='y')
-
-        self.acp_window.nextRow()
-
-        # 2. Points Curve
-        p2 = self.acp_window.addPlot(title="Points estimator")
-        p2.setLabel('left', 'Points', units='pts')
-        p2.setLabel('bottom', 'Energy Used', units='kWh')
-        p2.addLegend()
-
-        p2.plot(energies_kwh, p_endurance, pen=pg.mkPen('r', width=2, style=Qt.PenStyle.DashLine), name='Endurance')
-        p2.plot(energies_kwh, p_efficiency, pen=pg.mkPen('g', width=2, style=Qt.PenStyle.DashLine), name='Efficiency')
-        p2.plot(energies_kwh, p_total, pen=pg.mkPen('k', width=4), name='Total Score')
-
-        v_line = pg.InfiniteLine(pos=opt_energy, angle=90, pen=pg.mkPen('y', width=2, style=Qt.PenStyle.DashLine))
-        p2.addItem(v_line)
-        
-        info_html = (f"<div style='color:black; background-color: rgba(255,255,0,0.7); padding:3px; font-weight:bold;'>"
-                     f"OPTIMUM:<br>E: {opt_energy:.2f} kWh<br>Pts: {opt_score:.1f}</div>")
-        text = pg.TextItem(html=info_html, anchor=(0.5, 0))
-        text.setPos(opt_energy, opt_score)
-        p2.addItem(text)
-        
-        p2.setXLink(p1)
-        '''
+   

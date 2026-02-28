@@ -16,7 +16,6 @@ recuperation_limit_W = [40e3, 40e3, 40e3, 40e3, 40e3, 40e3, 40e3,
 # =========================
 def get_recuperation_limit(SoC_ca):
     """
-    Vrací spojitý (hladký) limit rekuperace ve Wattech pro dané SoC.
     """
     P_max = 40e3      # 40 kW limit
     soc_mid = 0.885   # Kde křivka protíná 20 kW

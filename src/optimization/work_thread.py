@@ -5,6 +5,7 @@ import numpy as np
 from dataclasses import dataclass, field
 import casadi as ca
 from scipy.interpolate import RegularGridInterpolator, griddata
+import time
 
 
 @dataclass
@@ -18,6 +19,7 @@ MODE_SINGLE = 0
 MODE_ENDURANCE = 1
 MODE_ACP_TEST = 2
 MODE_STRATEGY_OPT = 3
+MODE_DEPLOYMENT_OPT = 4
 
 
 class SolverWorker(QThread):
@@ -46,12 +48,15 @@ class SolverWorker(QThread):
                 self.run_acp_test()
             elif self.mode == MODE_STRATEGY_OPT:
                 self.run_endurance_opt()
+            elif self.mode == MODE_DEPLOYMENT_OPT:  
+                self.run_deployment_opt()
                 
         except Exception as e:
             self.error.emit(str(e))
 
     def run_single_lap(self):
-    
+        
+        start = time.time()
         #start from the same speed as in the real log
         if self.track.speed is not None:
             init_cond = InitConditions(v=self.track.speed[0], T=0.0, E=1.0)
@@ -78,8 +83,14 @@ class SolverWorker(QThread):
         '''
         
         # solver
-        res = self.solver.solveLap(init_cond, ds=self.ds,init_guess=init_guess)
+        if self.solver.rk4 == False:
+            res = self.solver.solveLap(init_cond, ds=self.ds,init_guess=init_guess)
+        else:
+            res = self.solver.solveLap_rk4(init_cond, ds=self.ds,init_guess=init_guess)
+        
+        end = time.time()
 
+        print(f"Time elapsed: {end - start:.6f} s")
         
         if not res.success:
             raise Exception("Optimization failed for single lap.")
@@ -93,62 +104,138 @@ class SolverWorker(QThread):
         self.finished.emit(payload)
 
     def run_endurance_opt(self):
-        #calculate EF min
-        #simulate with car using 4 kwH and max regen
-        ef_min = self.solver.ef_guess(4)
+        ef_min_res = self.solver.solve(0,0,objective="efficiency")
+        if ef_min_res["success"]:
+            ef_min = ef_min_res["ef_score"]
+            print(f"opt ef score {ef_min}")
+        else:
+            ef_min = self.solver.ef_guess(4)
+            print(f"fallback ef score {ef_min}")
 
-        t_min = self.solver.best_T_guess(self.car.performance_delta)
 
-        #calculate the endurance map
-        e_targets = np.linspace(3.6,5.6,num=20,endpoint=True)
-        regen_targets = np.linspace(0.15,0.94,num=20,endpoint=True)
-        delta_targets = np.linspace(0,0.15,num=20,endpoint=True)
+        #fix time delta
+        t_min_res = self.solver.solve(0,0,objective="time")
+        if t_min_res["success"]:
+            t_min = t_min_res["total_time"]
+            print(f"opt min time {t_min}")
+        else:
+            t_min = self.solver.best_T_guess(0)
+            print(f"fallback min time {t_min}")
+      
 
-        points_grid = np.zeros((len(e_targets), len(regen_targets), len(delta_targets)))
+        regen_targets = np.linspace(0.15, 0.99, num=20, endpoint=True)
+        delta_targets = np.linspace(0.0, 0.15, num=20, endpoint=True)
 
-        for i, e_target in enumerate(e_targets):
-            for j, regen_target in enumerate(regen_targets):
-                for k, delta_target in enumerate(delta_targets):
-                    
-                    points = self.solver.getPoints(regen_target, e_target, delta_target, ef_min, t_min)
-                    points_grid[i, j, k] = points
-                  
+        # POZOR NA ZÁVORKY: np.zeros((x, y)) musí mít tuple!
+        e_opt_grid = np.zeros((len(regen_targets), len(delta_targets)))
+        soc_opt_grid = np.zeros((len(regen_targets), len(delta_targets)))
 
-        points_interpolant = RegularGridInterpolator(
-            (e_targets, regen_targets, delta_targets), 
-            points_grid, 
-            method='cubic',
-            bounds_error=True
+        current_step =0
+        total_steps = len(regen_targets)*len(delta_targets)
+
+        for i, regen_target in enumerate(regen_targets):
+            for j, delta_target in enumerate(delta_targets):
+
+                current_step += 1
+                self.progress.emit(current_step, total_steps)
+                
+                self.car.regen_eff = regen_target
+                t_min_adj = t_min*(1-delta_target)
+              
+                # Vyřešíme optimum přes CasADi
+                res = self.solver.solve(ef_min, t_min_adj)
+                
+                if res and res.get("success", False):
+                    # res["e_targets"] je pole spotřeby na kolo, sečteme ho pro celkovou energii
+                    e_opt_grid[i, j] = np.sum(res["e_targets"])
+                    soc_opt_grid[i, j] = res["soc_start"]
+                else:
+                    # Pokud solver pro danou kombinaci nenajde řešení, dáme tam NaN
+                    e_opt_grid[i, j] = np.nan
+                    soc_opt_grid[i, j] = np.nan
+
+        # Vytvoření DVOU 2D interpolantů (method='linear' je lepší, pokud máme v gridu nějaké NaN hodnoty ze selhání)
+        e_interpolant = RegularGridInterpolator(
+            (regen_targets, delta_targets), e_opt_grid, method='linear', bounds_error=False, fill_value=np.nan
         )
-
-
-        print(f"Ef min guess {ef_min:.2f}")
-        print(f"time min guess: {t_min:.2f}")
-        print(f"Car regen: {self.car.regen_eff}")
-        print(f"Delta {self.car.performance_delta}")
-
-    
-        res = self.solver.solve(ef_min,t_min)
-        
+        soc_interpolant = RegularGridInterpolator(
+            (regen_targets, delta_targets), soc_opt_grid, method='linear', bounds_error=False, fill_value=np.nan
+        )
+     
         payload = SolverPayload(
-            kind="endurance_strategy",
-            data=res,
+            kind="endurance_map",
+            data=None,
             meta={
                 "ef_min": ef_min,
                 "t_min": t_min,
-                "points_interpolant": points_interpolant,
-                "grid_e": e_targets,
+                "e_interpolant": e_interpolant,      #
+                "soc_interpolant": soc_interpolant,  
                 "grid_regen": regen_targets,
                 "grid_delta": delta_targets,
-                "z_min_points": np.min(points_grid),
-                "z_max_points": np.max(points_grid)
+                "z_min_e": np.nanmin(e_opt_grid),    
+                "z_max_e": np.nanmax(e_opt_grid)
             }
         )
 
         self.finished.emit(payload)
 
+    def run_deployment_opt(self):
+        """
+        Vypočítá pouze jedno konkrétní nasazení strategie (jeden bod)
+        pro zadaný Regen a Delta a vrátí detailní data pro StrategyResultTab.
+        """
+        # 1. Získání baseline hodnot (stejně jako u gridu)
+        ef_min_res = self.solver.solve(0,0,objective="efficiency")
+        if ef_min_res["success"]:
+            ef_min = ef_min_res["ef_score"]
+            print(f"opt ef score {ef_min}")
+        else:
+            ef_min = self.solver.ef_guess(4)
+            print(f"fallback ef score {ef_min}")
+
+
+        #fix time delta
+        t_min_res = self.solver.solve(0,0,objective="time")
+        if t_min_res["success"]:
+            t_min = t_min_res["total_time"]
+            print(f"opt min time {t_min}")
+        else:
+            t_min = self.solver.best_T_guess(0)
+            print(f"fallback min time {t_min}")
+      
+
+        # 2. Úprava času soupeře podle zadané delty
+        t_min_adj = t_min * (1 - self.car.performance_delta)
+
+        # 3. Spuštění optimalizace pro tyto konkrétní podmínky
+        res_opt = self.solver.solve(ef_min, t_min_adj)
+
+        res_full = self.solver.solve(ef_min,t_min_adj,enforce_full_soc=True)
+
+        # 4. Vytvoření payloadu
+        # Použijeme kind="endurance_deployment", na který vaše UI už čeká
+        payload = SolverPayload(
+            kind="endurance_deployment",
+            data={
+                "opt_soc": res_opt,
+                "full_soc": res_full
+            },
+            meta={
+                "ef_min": ef_min,
+                "t_min": t_min,
+                "regen_eff": self.car.regen_eff,
+                "delta": self.car.performance_delta
+            }
+        )
+
+        # 5. Odeslání výsledků do hlavního vlákna
+        self.finished.emit(payload)
+
+
     def run_acp_test(self):
         
+        start = time.time()
+
         total_race_distance = 22000.0 # [m]
         laps = int(np.round(total_race_distance / self.track.length))
 
@@ -157,12 +244,12 @@ class SolverWorker(QThread):
         original_regen = self.car.regen_eff
 
         # grid setup
-        acp_targets = np.linspace(3.5,10,num=10,endpoint=True)
+        acp_targets = np.linspace(3.5,10.0,num=15,endpoint=True)
         e_targets = np.round(acp_targets/self.laps,2)
         
-        regen_targets = np.linspace(0.0, 0.94, num=10, endpoint=True)
+        regen_targets = np.linspace(0.0, 1.0, num=15, endpoint=True)
 
-        soc_targets = np.linspace(0.1,1,num=10,endpoint=True)
+        soc_targets = np.linspace(0.1,1.0,num=15,endpoint=True)
 
         total_steps = len(e_targets) * len(regen_targets)*len(soc_targets)
         results_log = []
@@ -193,7 +280,7 @@ class SolverWorker(QThread):
                     E_start = np.round(self.car.acp_capacity*(1-soc),2)
                     init_cond = InitConditions(v=self.track.speed[0]-2,T=0.0,E=E_start)
                     print(f"E_start :{E_start}, SoC: {soc} E target: {e_target} Regen: {regen}")
-                    res = self.solver.solveLap(
+                    res = self.solver.solveLap_rk4(
                         init_cond=init_cond,
                         ds=self.ds,
                         init_guess=prev_res
@@ -245,9 +332,13 @@ class SolverWorker(QThread):
             else:
                 print("KRITICKÁ CHYBA: Solver selhal na všech bodech mřížky!")
 
+        end = time.time()
+
+        print(f"Time elapsed: {end - start:.6f} s")
+
    
         np.savez_compressed(
-            f"laptime_map{self.track.name}_10_10_10_soc_based_fixed.npz",
+            f"laptime_map{self.track.name}_15_15_15.npz",
             soc_targets=np.array(soc_targets),
             e_targets=np.array(e_targets),
             regen_targets=np.array(regen_targets),
