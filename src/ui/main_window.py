@@ -427,7 +427,7 @@ class MainWindow(QMainWindow):
        
         try:
             track_name = self.combo_track.currentText()
-            name = track_name+"_laptime_map2"
+            name = track_name+"_laptime_map_"
             tracks_dir="data/tracks/lapmaps"
             filepath = os.path.join(tracks_dir, f"{name}.npz")
             self.laptime_map_plot = LaptimeAppMainWindow(filepath)
@@ -441,19 +441,17 @@ class MainWindow(QMainWindow):
             return
         
 
-    def start_strategy_optimization(self, regen_val, delta_val,map_data):
+    def start_strategy_optimization(self, regen_val, delta_val,min_e_target,max_e_target,map_data):
        
         car = Car.from_ui_widget(self)
         laps_count = self.input_laps.value()
         
         laptime_interpolant = map_data['interpolant']
-        #create solver
-
-        solver = StrategyMaker(car,laptime_interpolant,laps_count)
+    
+        solver = StrategyMaker(car,laptime_interpolant,laps_count,min_e_target+0.01,max_e_target-0.01)
 
         self.loading_overlay.show_loading("Optimizing strategy...", indefinite=True,progress_text_fmt="Solving grid points ({} / {})")
-        
-        # Vytvoříme worker s novým módem
+      
         self.ds_used = self.input_ds.value()
         car.regen_eff = regen_val
         car.performance_delta = delta_val
@@ -461,17 +459,18 @@ class MainWindow(QMainWindow):
         self.worker = SolverWorker(solver, car, None, self.ds_used, mode=MODE_STRATEGY_OPT, laps=laps_count)
         
         self.connect_worker_signals()
+        self.worker.progress.connect(self.loading_overlay.update_progress)
+        self.worker.progress.connect(self.laptime_map_plot.loading_overlay.update_progress)
         self.worker.start()
 
 
-    def run_deployment(self,regen_val,delta_val,map_data):
+    def run_deployment(self,regen_val,delta_val,min_e_target,max_e_target,map_data):
 
-        
         car = Car.from_ui_widget(self)
         laps_count = self.input_laps.value()
         
         laptime_interpolant = map_data['interpolant']
-        solver = StrategyMaker(car, laptime_interpolant, laps_count)
+        solver = StrategyMaker(car, laptime_interpolant, laps_count,min_e_target+0.01,max_e_target-0.01)
 
         self.loading_overlay.show_loading("Calculating lap deployment...", indefinite=True)
         
@@ -522,7 +521,7 @@ class MainWindow(QMainWindow):
         self.worker.finished.connect(self.on_solver_finished)
         self.worker.error.connect(self.on_solver_error)
         self.worker.progress.connect(self.loading_overlay.update_progress)
-        self.worker.progress.connect(self.laptime_map_plot.loading_overlay.update_progress)
+        
         
 
     def on_create_track_clicked(self):

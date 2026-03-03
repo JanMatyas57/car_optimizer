@@ -33,7 +33,7 @@ class Car:
     power_max =80000
     brake_max = 60000
     power_eff = 0.88
-    regen_eff = 0.8
+    regen_eff = 0.0
     fix_drag = 230
     wheel_radius = 0.205
     max_torque = 30.0

@@ -52,7 +52,7 @@ class MapTab(QWidget):
             self.X_mesh, self.Y_mesh = np.meshgrid(map_data['e_fine'], map_data['r_fine'])
         else:
             self.slider.setMinimum(int(map_data['r_min'] * 100))
-            self.slider.setMaximum(int(map_data['r_max'] * 100))
+            self.slider.setMaximum(100)
             self.slider.setTickInterval(10)
             self.slider.setValue(int(map_data['r_max'] * 50))
             self.X_mesh, self.Y_mesh = np.meshgrid(map_data['e_fine'], map_data['soc_fine'])
@@ -131,8 +131,8 @@ class MapTab(QWidget):
 
 
 class LaptimeAppMainWindow(QWidget):
-    optimization_requested = pyqtSignal(float, float, object)
-    deployment_requested = pyqtSignal(float, float, object)
+    optimization_requested = pyqtSignal(float, float,float,float, object)
+    deployment_requested = pyqtSignal(float, float, float,float, object)
 
     def __init__(self, filepath, parent=None):
         super().__init__(parent)
@@ -159,9 +159,9 @@ class LaptimeAppMainWindow(QWidget):
         # Inputs
         lbl_regen = QLabel("Recuperation [%]:")
         self.spin_regen = QDoubleSpinBox()
-        self.spin_regen.setRange(0.0, 94)
+        self.spin_regen.setRange(0.0, 100)
         self.spin_regen.setSingleStep(1)
-        self.spin_regen.setValue(85) 
+        self.spin_regen.setValue(80) 
         
         lbl_delta = QLabel("Time delta [%]:")
         self.spin_delta = QDoubleSpinBox()
@@ -242,10 +242,13 @@ class LaptimeAppMainWindow(QWidget):
             
             grid_axes = [soc_targets.tolist(), e_targets.tolist(), regen_targets.tolist()]
             interpolant = ca.interpolant('laptime_map', 'bspline', grid_axes, flat_for_casadi.tolist())
+
+            self.min_e_target = min(e_targets)
+            self.max_e_target = max(e_targets)
             
-            e_fine = np.linspace(0.17, max(e_targets), 50) 
-            r_fine = np.linspace(min(regen_targets), max(regen_targets), 50)
-            soc_fine = np.linspace(min(soc_targets), max(soc_targets), 50)
+            e_fine = np.linspace(min(e_targets), max(e_targets), 50) 
+            r_fine = np.linspace(min(regen_targets), 1.0, 50)
+            soc_fine = np.linspace(min(soc_targets), 1.0, 50)
             
             return {
                 'interpolant': interpolant,
@@ -305,14 +308,14 @@ class LaptimeAppMainWindow(QWidget):
         regen_val = self.spin_regen.value()/100
         delta_val = self.spin_delta.value()/100
         self.loading_overlay.show_loading("Calculating optimal strategy...", indefinite=True,progress_text_fmt="Solving grid points ({} / {})")
-        self.optimization_requested.emit(regen_val, delta_val,self.map_data)
+        self.optimization_requested.emit(regen_val, delta_val,self.min_e_target,self.max_e_target,self.map_data)
 
     def run_deployment(self):
         regen_val = self.spin_regen.value()/100
         delta_val = self.spin_delta.value()/100
         # Zde použijeme točící se GIF, protože jde jen o jeden konkrétní bod, takže to bude hned
         self.loading_overlay.show_loading("Calculating optimum energy deployment for given input", indefinite=True)
-        self.deployment_requested.emit(regen_val, delta_val, self.map_data)
+        self.deployment_requested.emit(regen_val, delta_val,self.min_e_target,self.max_e_target,self.map_data)
         
         
 
@@ -480,7 +483,7 @@ class OptimalEnergyMapTab(QWidget):
         self.lbl_regen.setFixedWidth(100)
         self.slider_regen = QSlider(Qt.Orientation.Horizontal)
         self.slider_regen.setMinimum(int(min(self.grid_regen) * 100))
-        self.slider_regen.setMaximum(int(max(self.grid_regen) * 100))
+        self.slider_regen.setMaximum(100)
         self.slider_regen.setValue(int(max(self.grid_regen) * 50))
         regen_layout.addWidget(self.lbl_regen)
         regen_layout.addWidget(self.slider_regen)
@@ -499,7 +502,7 @@ class OptimalEnergyMapTab(QWidget):
         sliders_vbox.addLayout(delta_layout)
         
         # ZMĚNA: Přidán prostor pro výpis Optimálního SoC!
-        self.lbl_opt_energy = QLabel("Optimal Energy:\n-- kWh\n\nOptimal SoC Start:\n-- %")
+        self.lbl_opt_energy = QLabel("Optimal energy:\n-- kWh\n\nOptimal SoC start:\n-- %")
         self.lbl_opt_energy.setStyleSheet("""
             font-size: 15px; 
             font-weight: bold; 

@@ -33,4 +33,8 @@ if __name__ == "__main__":
     sys.exit(app.exec())
 
 #TO ADD
-#change car.energy limit to use innit conditions
+#add elevation change 
+#add warm start
+#redesign to use one event bus
+#add twintrack
+#add optuna to find twintrack parameters and UI

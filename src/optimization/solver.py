@@ -530,17 +530,19 @@ class MassPointSolver:
         # Initial guess
         # =========================
         if init_guess is not None:
-             # Doporučuju časem využívat předaný init_guess, zatím tu máš hardcoded 15.0
-             pass
-             
-        opti.set_initial(v, 15.0)
-        opti.set_initial(F_acc, 100.0)
+            #opti.set_initial(v, init_guess['v'])
+            #opti.set_initial(F_acc, init_guess['F_acc'])
+            pass
+            #tady pridat toho vic
+        else:
+            opti.set_initial(v, 15.0)
+            opti.set_initial(F_acc, 100.0)
 
         # =========================
         # Solver setup
         # =========================
         p_opts = {"expand": True}
-        s_opts = {"max_iter": 5600, "tol": 1e-2, "print_level": 5}
+        s_opts = {"max_iter": 2000, "tol": 1e-2, "print_level": 5}
 
         opti.solver("ipopt", p_opts, s_opts)
 
@@ -1270,12 +1272,14 @@ class MPCC_Solver:
 
 class StrategyMaker:
 
-    def __init__(self,car,laptime_map,laps):
+    def __init__(self,car,laptime_map,laps,e_target_min,e_target_max):
         self.car = car
         self.laptime_map = laptime_map
         self.laps = laps
+        self.e_target_min = e_target_min
+        self.e_target_max = e_target_max
         pass
-
+ 
 
     def ef_guess(self,energy_target_endurance):
         #simulate the car with x kWh with max regen to estimate winning EF_score
@@ -1380,7 +1384,7 @@ class StrategyMaker:
             SoC_start = opti.variable()
 
             if enforce_full_soc:
-                opti.subject_to(SoC_start == 0.99)
+                opti.subject_to(SoC_start == 1.0)
         
             
             # Stav baterie (SoC) na začátku každého kola + na úplném konci závodu (N+1)
@@ -1409,12 +1413,12 @@ class StrategyMaker:
     
             opti.subject_to(SoC >= MIN_SOC)
             opti.subject_to(SoC_start >= 0.5)
-            opti.subject_to(SoC_start <= 0.99)
+            opti.subject_to(SoC_start <= 1.0)
             #opti.subject_to(SoC <= 1.0)
             
         
-            opti.subject_to(E_lap >= 0.17) 
-            opti.subject_to(E_lap <= 0.4) 
+            opti.subject_to(E_lap >= self.e_target_min) 
+            opti.subject_to(E_lap <= self.e_target_max) 
 
 
             # === INITIAL GUESS ===
@@ -1511,17 +1515,13 @@ class StrategyMaker:
                     lap_time_k = float(sol.value(self.laptime_map(ca.vertcat(soc_k, e_k, regen_k))))
                     opt_lap_times.append(lap_time_k)
                     
-                    # POKUD JE ČAS PODEZŘELE NÍZKÝ, VYPÍŠEME VSTUPY
-                    if lap_time_k < 60.0: # Nastavte podle reálného rekordu trati
-                        print(f"!!! ANOMÁLIE V KOLE {k+1} !!!")
+                    
+                    if lap_time_k < 20.0: 
                         print(f"   Laptime: {lap_time_k:.2f} s")
                         print(f"   Vstupy -> SoC_start: {soc_k:.4f}, E_lap: {e_k:.4f}, Regen: {regen_k:.2f}")
+                        return {"sccess":False}
 
                 opt_total_time = sol.value(total_time)
-
-                if opt_total_time < T_min:
-                    print("Závod byl odjet rychleji než je povolené T_min, vracím False.")
-                    return {"success": False}
 
                 return {
                     "success": True,

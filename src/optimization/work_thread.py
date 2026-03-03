@@ -4,6 +4,7 @@ from src.core.track import Track
 import numpy as np
 from dataclasses import dataclass, field
 import casadi as ca
+import os
 from scipy.interpolate import RegularGridInterpolator, griddata
 import time
 
@@ -59,7 +60,7 @@ class SolverWorker(QThread):
         start = time.time()
         #start from the same speed as in the real log
         if self.track.speed is not None:
-            init_cond = InitConditions(v=self.track.speed[0], T=0.0, E=1.0)
+            init_cond = InitConditions(v=self.track.speed[0], T=0.0, E=2.0)
         else:
             init_cond = InitConditions(v=5, T=0.0, E=0.0)
 
@@ -112,7 +113,6 @@ class SolverWorker(QThread):
             ef_min = self.solver.ef_guess(4)
             print(f"fallback ef score {ef_min}")
 
-
         #fix time delta
         t_min_res = self.solver.solve(0,0,objective="time")
         if t_min_res["success"]:
@@ -123,8 +123,8 @@ class SolverWorker(QThread):
             print(f"fallback min time {t_min}")
       
 
-        regen_targets = np.linspace(0.15, 0.99, num=20, endpoint=True)
-        delta_targets = np.linspace(0.0, 0.15, num=20, endpoint=True)
+        regen_targets = np.linspace(0.15, 1.0, num=10, endpoint=True)
+        delta_targets = np.linspace(0.0, 0.15, num=10, endpoint=True)
 
         # POZOR NA ZÁVORKY: np.zeros((x, y)) musí mít tuple!
         e_opt_grid = np.zeros((len(regen_targets), len(delta_targets)))
@@ -143,7 +143,7 @@ class SolverWorker(QThread):
                 t_min_adj = t_min*(1-delta_target)
               
                 # Vyřešíme optimum přes CasADi
-                res = self.solver.solve(ef_min, t_min_adj)
+                res = self.solver.solve(ef_min, t_min_adj, objective="points")
                 
                 if res and res.get("success", False):
                     # res["e_targets"] je pole spotřeby na kolo, sečteme ho pro celkovou energii
@@ -208,9 +208,9 @@ class SolverWorker(QThread):
         t_min_adj = t_min * (1 - self.car.performance_delta)
 
         # 3. Spuštění optimalizace pro tyto konkrétní podmínky
-        res_opt = self.solver.solve(ef_min, t_min_adj)
+        res_opt = self.solver.solve(ef_min, t_min_adj,objective="points")
 
-        res_full = self.solver.solve(ef_min,t_min_adj,enforce_full_soc=True)
+        res_full = self.solver.solve(ef_min,t_min_adj,objective="points",enforce_full_soc=True)
 
         # 4. Vytvoření payloadu
         # Použijeme kind="endurance_deployment", na který vaše UI už čeká
@@ -247,9 +247,9 @@ class SolverWorker(QThread):
         acp_targets = np.linspace(3.5,10.0,num=15,endpoint=True)
         e_targets = np.round(acp_targets/self.laps,2)
         
-        regen_targets = np.linspace(0.0, 1.0, num=15, endpoint=True)
+        regen_targets = np.linspace(0.0, 1.1, num=15, endpoint=True)
 
-        soc_targets = np.linspace(0.1,1.0,num=15,endpoint=True)
+        soc_targets = np.linspace(0.08,1.05,num=15,endpoint=True)
 
         total_steps = len(e_targets) * len(regen_targets)*len(soc_targets)
         results_log = []
@@ -304,16 +304,16 @@ class SolverWorker(QThread):
                         flat_lap_times.append(np.nan) 
 
 
-        # --- Záchrana B-spline gridu: Vyplnění NaN hodnot ---
+       
         flat_lap_times = np.array(flat_lap_times, dtype=float)
         
         if np.isnan(flat_lap_times).any():
-            print("Nalezeny neplatné body (fyzika/solver). Opravuji pro B-spline...")
+       
             
-            # Vytvoření souřadnicové sítě přesně odpovídající tvým vnořeným for cyklům
+            
             S, E_grid, R = np.meshgrid(soc_targets, e_targets, regen_targets, indexing='ij')
             
-            # Spojení do matice bodů [N, 3]
+       
             points = np.column_stack((S.ravel(), E_grid.ravel(), R.ravel()))
             values = flat_lap_times
             
@@ -330,15 +330,24 @@ class SolverWorker(QThread):
                 # Přepíšeme pole s lap časy vyčištěnými daty
                 flat_lap_times = filled_values
             else:
-                print("KRITICKÁ CHYBA: Solver selhal na všech bodech mřížky!")
+                pass
 
         end = time.time()
 
         print(f"Time elapsed: {end - start:.6f} s")
 
+        save_dir = os.path.join("data", "tracks", "lapmaps")
+        
+        # Create the directories if they do not exist
+        os.makedirs(save_dir, exist_ok=True)
+        
+        # Construct the full file path
+        # Added an underscore before the track name for better readability
+        file_path = os.path.join(save_dir, f"laptime_map_{self.track.name}.npz")
+
    
         np.savez_compressed(
-            f"laptime_map{self.track.name}_15_15_15.npz",
+            file_path,
             soc_targets=np.array(soc_targets),
             e_targets=np.array(e_targets),
             regen_targets=np.array(regen_targets),
