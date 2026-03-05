@@ -1,26 +1,20 @@
-
 import os
 import glob
 import numpy as np 
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                              QHBoxLayout, QFormLayout, QGroupBox, QComboBox, 
-                             QDoubleSpinBox, QPushButton, QSplitter, QCheckBox, QSpinBox,QFileDialog,QMessageBox)
-from PyQt6.QtCore import Qt
-import pyqtgraph as pg
-import pyqtgraph.opengl as gl
+                             QDoubleSpinBox, QPushButton, QSplitter, QCheckBox, 
+                             QFileDialog, QMessageBox, QDialog, QDialogButtonBox, QInputDialog)
+from PyQt6.QtCore import Qt, pyqtSignal
+
+# track for rendering
 from src.core.track import Track
-from  src.core.trackGenerator import TrackGenerator
-from src.core.car import Car
-from src.optimization.solver import MassPointSolver, MPCC_Solver, SingleTrackSolver, StrategyMaker
-from src.optimization.work_thread import SolverWorker, MODE_ACP_TEST, MODE_ENDURANCE, MODE_SINGLE, MODE_STRATEGY_OPT, MODE_DEPLOYMENT_OPT
+from src.core.trackGenerator import TrackGenerator
 from src.optimization.track_generation_thread import TrackGenerationWorker
-from src.ui.results_window import ResultsWindow
-from src.ui.endurance_results import EnduranceResultsWindow
-from src.ui.results_tab import CompareWindow
+from src.handlers.requests import SingleLapRequest, EnduranceRequest, LapMapTestRequest
 from src.ui.loader import LoadingOverlay
-from src.ui.drs_plot import DRSResultsWindow
-from src.ui.sensitivity_plot import LaptimeSensitivityPlot
-from src.ui.endurance_strategy import LaptimeAppMainWindow
+from src.utils.config_manager import ConfigManager
+
 from PyQt6.QtGui import QTransform, QColor
 import matplotlib
 matplotlib.use('QtAgg') 
@@ -28,80 +22,82 @@ from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
 from matplotlib.collections import LineCollection
 from matplotlib.colors import Normalize
-from mpl_toolkits.mplot3d.art3d import Line3DCollection
-import matplotlib.pyplot as plt
-from scipy.interpolate import RegularGridInterpolator
 
 class MplCanvas(FigureCanvasQTAgg):
     def __init__(self, parent=None, width=5, height=4, dpi=100):
-        
         self.fig = Figure(figsize=(width, height), dpi=dpi)
         self.axes = self.fig.add_subplot(111)
-        
         super(MplCanvas, self).__init__(self.fig)
         self.setParent(parent)
-        
-       
         FigureCanvasQTAgg.updateGeometry(self)
 
-# graph styling
-pg.setConfigOption('background', 'w')
-pg.setConfigOption('foreground', 'k')
-pg.setConfigOption('antialias', True) 
 
 class MainWindow(QMainWindow):
-    def __init__(self):
+    openCompareRequested = pyqtSignal()
+    openStrategyRequested = pyqtSignal(str)
+
+    def __init__(self, controller):
         super().__init__()
+        self.controller = controller
+
+        # store defaults to use them when creating a new car or handling missing files
+        self.default_params = {
+            "acp_capacity": 6.0,
+            "weight": 280.0,
+            "cd": 1.83,
+            "cd_drs": 1.17,
+            "cl": 5.64,
+            "cl_drs": 4.2,
+            "cop": 0.53,
+            "power_limit": 80.0,
+            "regen_eff": 0.8,
+            "laps": 22,
+            "ds": 0.5,
+            "model_type": "mass_point",
+            "energy_limit": None,
+            "drs_allowed": True,
+            "soc_start": 1.0 # moved to simulation settings
+        }
+        
+        # current active parameters
+        self.car_params = self.default_params.copy()
+        self.current_vehicle_name = None
 
         self.setWindowTitle("OptiSim")
         self.resize(1200, 900)
 
-        # Main layout
+        # main layout setup
         self.central_widget = QWidget()
         self.setCentralWidget(self.central_widget)
         self.main_layout = QHBoxLayout(self.central_widget)
 
-        # left panel 
+        # left control panel 
         self.control_panel = QWidget()
         self.control_layout = QVBoxLayout(self.control_panel)
         self.control_panel.setFixedWidth(320)
         
         self.init_track_section() 
-        self.init_car_params_section()
         
-        # Single lap button
-        self.btn_run = QPushButton("Run single lap")
-        self.btn_run.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_run.setStyleSheet("background-color: #28a745; color: white; font-weight: bold; padding: 10px;")
-        self.btn_run.clicked.connect(self.on_run_single_clicked)
-        self.control_layout.addWidget(self.btn_run)
+        self.btn_config_car = QPushButton("⚙️ Configure car parameters")
+        self.btn_config_car.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_config_car.setStyleSheet("background-color: #343a40; color: white; font-weight: bold; padding: 10px; margin-top: 10px;")
+        self.btn_config_car.clicked.connect(self.open_car_config)
+        self.control_layout.addWidget(self.btn_config_car)
         
-        self.control_layout.addStretch()
-        
-        # Endurance section
-        self.init_endurance_section()
+        self.init_quick_settings()
+        self.init_run_buttons()
         
         self.control_layout.addStretch()
 
         self.btn_create_track = QPushButton("Create track from data")
         self.btn_create_track.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_create_track.setStyleSheet("""
-            QPushButton { 
-                background-color: #6f42c1; /* Fialová */
-                color: white;              /* Bílý text */
-                font-weight: bold; 
-                padding: 10px; 
-                border-radius: 4px; 
-                margin-top: 10px; 
-            }
-            QPushButton:hover { 
-                background-color: #5a32a3; /* Tmavší fialová pro hover */
-            }
+            QPushButton { background-color: #6f42c1; color: white; font-weight: bold; padding: 10px; border-radius: 4px; margin-top: 10px; }
+            QPushButton:hover { background-color: #5a32a3; }
         """)
         self.btn_create_track.clicked.connect(self.on_create_track_clicked)
         self.control_layout.addWidget(self.btn_create_track)
 
-        # Compare Button
         self.btn_compare = QPushButton("Compare logs")
         self.btn_compare.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_compare.setStyleSheet("""
@@ -111,163 +107,238 @@ class MainWindow(QMainWindow):
         self.btn_compare.clicked.connect(self.on_compare_clicked)
         self.control_layout.addWidget(self.btn_compare)
 
-      # --- RIGHT PANEL (Graphs) ---
+        # right panel (graphs)
         self.graph_panel = QWidget()
         self.graph_layout = QVBoxLayout(self.graph_panel)
-        
-        # Místo PyQtGraph vytvoříme Matplotlib Canvas
         self.mpl_canvas = MplCanvas(self, width=5, height=4, dpi=100)
         self.graph_layout.addWidget(self.mpl_canvas)
 
-        # Splitter
         splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter.addWidget(self.control_panel)
         splitter.addWidget(self.graph_panel)
         splitter.setSizes([320, 880])
         self.main_layout.addWidget(splitter)
 
-        # Loading overlay
         self.loading_overlay = LoadingOverlay(self)
         
-        # Initial data load
+        self.controller.simulationStarted.connect(self.loading_overlay.show_loading)
+        self.controller.simulationProgress.connect(self.loading_overlay.update_progress)
+        self.controller.simulationFinished.connect(lambda _: self.loading_overlay.hide_loading())
+        self.controller.simulationError.connect(lambda _: self.loading_overlay.hide_loading())
+
+        # initial loads
         self.load_track_list()
+        self.load_vehicle_list()
 
     def resizeEvent(self, event):
         self.loading_overlay.resize(self.size())
         super().resizeEvent(event)
 
     # ==========================================
-    # UI INITIALIZATION METHODS
+    # vehicle profile management
     # ==========================================
+    def load_vehicle_list(self, select_name=None):
+        vehicles = ConfigManager.get_available_vehicles()
+        
+        # create default if directory is totally empty
+        if not vehicles:
+            ConfigManager.save_vehicle("default_car", self.default_params)
+            vehicles = ["default_car"]
+            
+        self.combo_vehicle.blockSignals(True)
+        self.combo_vehicle.clear()
+        self.combo_vehicle.addItems(vehicles)
+        
+        if select_name and select_name in vehicles:
+            self.combo_vehicle.setCurrentText(select_name)
+        else:
+            self.combo_vehicle.setCurrentIndex(0)
+            
+        self.combo_vehicle.blockSignals(False)
+        
+        # force load the selected vehicle
+        self.current_vehicle_name = self.combo_vehicle.currentText()
+        self.car_params = ConfigManager.load_vehicle(self.current_vehicle_name, self.default_params)
+        self._update_ui_from_params()
+
+    def on_vehicle_changed(self):
+        # 1. save the outgoing vehicle first
+        if self.current_vehicle_name:
+            self._sync_params_from_ui()
+            ConfigManager.save_vehicle(self.current_vehicle_name, self.car_params)
+            
+        # 2. load the incoming vehicle
+        new_name = self.combo_vehicle.currentText()
+        if new_name:
+            self.current_vehicle_name = new_name
+            self.car_params = ConfigManager.load_vehicle(new_name, self.default_params)
+            self._update_ui_from_params()
+
+    def on_new_vehicle_clicked(self):
+        # ask user for a new name
+        name, ok = QInputDialog.getText(self, "New vehicle", "Enter vehicle name:")
+        if ok and name:
+            name = name.strip()
+            if name in ConfigManager.get_available_vehicles():
+                QMessageBox.warning(self, "error", "Vehicle with this name already exists!")
+                return
+            
+            # create new vehicle by duplicating current parameters
+            self._sync_params_from_ui()
+            ConfigManager.save_vehicle(name, self.car_params)
+            self.load_vehicle_list(select_name=name)
+
+    # ==========================================
+    # ui initialization methods
+    # ==========================================
+    def open_car_config(self):
+        dialog = CarConfigDialog(self.car_params, self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self.car_params = dialog.get_params()
+            self._sync_params_from_ui()
+            ConfigManager.save_vehicle(self.current_vehicle_name, self.car_params)
+            print(f"vehicle '{self.current_vehicle_name}' updated and saved.")
 
     def init_track_section(self):
-        group = QGroupBox("Track Selection")
+        group = QGroupBox("Track selection")
         layout = QFormLayout()
-
         self.combo_track = QComboBox()
         self.combo_track.currentIndexChanged.connect(self.on_track_changed) 
-        
         layout.addRow("Track:", self.combo_track)
         group.setLayout(layout)
         self.control_layout.addWidget(group)
 
-    def init_car_params_section(self):
-        group = QGroupBox("Car Parameters")
+    def init_quick_settings(self):
+        group = QGroupBox("Simulation settings")
         layout = QFormLayout()
 
+        # 1. vehicle model
         self.combo_model = QComboBox()
-        self.combo_model.addItem("Mass point (Euler)", "mass_point")
         self.combo_model.addItem("Mass point (Rk4)", "mass_point_rk4")
         self.combo_model.addItem("Single track", "single_track")
-
-    
         layout.addRow("Vehicle model:", self.combo_model)
 
-        def add_param(label, val, unit, min_val=0.0, max_val=10000.0, step=0.1):
-            spin = QDoubleSpinBox()
-            spin.setRange(min_val, max_val)
-            spin.setValue(val)
-            spin.setSingleStep(step)
-            spin.setSuffix(f" {unit}")
-            layout.addRow(label, spin)
-            return spin
-
-        self.input_mass = add_param("Mass:", 280, "kg", min_val=150, step=0.5)
-        self.input_cd = add_param("Drag Coeff (Cd):", 1.83, "", step=0.01)
-        self.input_cl = add_param("Downforce Coeff (Cl):", 5.64, "", step=0.01)
-        self.input_mu_x = add_param("Friction coeff x:", 1.25, "", step=0.01)
-        self.input_mu_y = add_param("Friction coeff y:", 1.25, "", step=0.01)
-        self.input_ds = add_param("Sim distance step:", 0.5, "m", min_val=0.1, max_val=2.0, step=0.05)
+        # 2. vehicle profile selector
+        veh_layout = QHBoxLayout()
+        veh_layout.setContentsMargins(0, 0, 0, 0)
+        self.combo_vehicle = QComboBox()
+        self.combo_vehicle.currentIndexChanged.connect(self.on_vehicle_changed)
         
-        # Single Lap Energy Limit
-        self.check_energy_limit = QCheckBox("Enable Energy Limit")
-        self.check_energy_limit.setChecked(False) 
-        self.input_limit_e = add_param("Energy limit", 0.2, "kWh", min_val=0.05, step=0.01)
-        self.input_limit_e.setEnabled(False)
+        self.btn_new_vehicle = QPushButton("+")
+        self.btn_new_vehicle.setFixedWidth(30)
+        self.btn_new_vehicle.clicked.connect(self.on_new_vehicle_clicked)
+        self.btn_new_vehicle.setToolTip("create a new vehicle profile")
+        
+        veh_layout.addWidget(self.combo_vehicle)
+        veh_layout.addWidget(self.btn_new_vehicle)
+        layout.addRow("Vehicle:", veh_layout)
 
+        # 3. sim distance step
+        self.input_ds = QDoubleSpinBox()
+        self.input_ds.setRange(0.1, 2.0)
+        self.input_ds.setSingleStep(0.05)
+        self.input_ds.setSuffix(" m")
+        layout.addRow("Sim distance step:", self.input_ds)
+
+        # 4. energy limit
+        self.check_energy_limit = QCheckBox("Enable energy limit")
+        self.input_limit_e = QDoubleSpinBox()
+        self.input_limit_e.setRange(0.1, 100.0)
+        self.input_limit_e.setSingleStep(0.01)
+        self.input_limit_e.setSuffix(" kWh")
         self.check_energy_limit.toggled.connect(self.input_limit_e.setEnabled)
         layout.addRow(self.check_energy_limit, self.input_limit_e)
-        self.check_drs = QCheckBox("Enable DRS")
-        self.check_drs.setChecked(True) 
+        
+        # 5. SoC start
+        self.input_soc = QDoubleSpinBox()
+        self.input_soc.setRange(0.1, 1.0)
+        self.input_soc.setSingleStep(0.05)
+        self.input_soc.setDecimals(2)
+        layout.addRow("SoC start:", self.input_soc)
+
+        # 6. drs
+        self.check_drs = QCheckBox("Enable drs")
         layout.addRow(self.check_drs)
 
         group.setLayout(layout)
         self.control_layout.addWidget(group)
 
-    def init_endurance_section(self):
-        group = QGroupBox("Endurance Parameters")
-        layout = QFormLayout()
+    def _update_ui_from_params(self):
+        """pushes loaded dict values into the ui widgets safely."""
+        idx = self.combo_model.findData(self.car_params.get("model_type", "mass_point"))
+        if idx >= 0: self.combo_model.setCurrentIndex(idx)
+        
+        self.input_ds.setValue(self.car_params.get("ds", 0.5))
+        
+        saved_e_limit = self.car_params.get("energy_limit")
+        self.check_energy_limit.setChecked(saved_e_limit is not None)
+        self.input_limit_e.setValue(saved_e_limit if saved_e_limit is not None else 0.2)
+        self.input_limit_e.setEnabled(self.check_energy_limit.isChecked())
+        
+        # update soc_start
+        self.input_soc.setValue(self.car_params.get("soc_start", 1.0))
+        
+        self.check_drs.setChecked(self.car_params.get("drs_allowed", True))
 
-        def add_dspin(val, unit, min_val, max_val, step):
-            spin = QDoubleSpinBox()
-            spin.setRange(min_val, max_val)
-            spin.setValue(val)
-            spin.setSingleStep(step)
-            spin.setSuffix(f" {unit}")
-            return spin
+    def init_run_buttons(self):
+        group = QGroupBox("Run actions")
+        layout = QVBoxLayout()
 
-        self.input_battery_cap = add_dspin(6.0, "kWh", 1.0, 20.0, 0.05)
-        layout.addRow("Battery Capacity:", self.input_battery_cap)
+        self.btn_run = QPushButton("Run single lap")
+        self.btn_run.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_run.setStyleSheet("background-color: #28a745; color: white; font-weight: bold; padding: 10px; margin-bottom: 5px;")
+        self.btn_run.clicked.connect(self.on_run_single_clicked)
+        layout.addWidget(self.btn_run)
 
-        self.input_laps = QSpinBox()
-        self.input_laps.setRange(1, 200)
-        self.input_laps.setValue(22) 
-        self.input_laps.setSuffix(" laps")
-        layout.addRow("Number of Laps:", self.input_laps)
-
-        # Endurance Run Button
-        self.btn_run_endurance = QPushButton("Run endurance")
-        self.btn_run_endurance.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_run_endurance.setStyleSheet("""
-            QPushButton { background-color: #198754; color: white; font-weight: bold; padding: 10px; margin-top: 5px; }
-            QPushButton:hover { background-color: #157347; }
-        """)
-        self.btn_run_endurance.clicked.connect(self.on_run_endurance_clicked)
-        layout.addRow(self.btn_run_endurance)
-
-        # Endurance Strategy Button
         self.btn_endurance_strategy = QPushButton("Endurance strategy")
         self.btn_endurance_strategy.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_endurance_strategy.setStyleSheet("""
-            QPushButton { background-color: #17a2b8; color: white; font-weight: bold; padding: 10px; margin-top: 5px; border-radius: 4px; }
-            QPushButton:hover { background-color: #138496; }
-        """)
+        self.btn_endurance_strategy.setStyleSheet("background-color: #17a2b8; color: white; font-weight: bold; padding: 10px; margin-bottom: 5px; border-radius: 4px;")
         self.btn_endurance_strategy.clicked.connect(self.on_endurance_strategy_clicked)
-        layout.addRow(self.btn_endurance_strategy)
+        layout.addWidget(self.btn_endurance_strategy)
 
-        # ACP Test Button
-        self.btn_acp_test = QPushButton("Run laptime sensitivity test")
-        self.btn_acp_test.setStyleSheet("background-color: #6c757d; color: white; padding: 5px; margin-top: 5px;")
-        self.btn_acp_test.clicked.connect(self.on_acp_test_clicked)
-        layout.addRow(self.btn_acp_test)
+        self.btn_acp_test = QPushButton("Generate laptime map")
+        self.btn_acp_test.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_acp_test.setStyleSheet("background-color: #6c757d; color: white; padding: 10px; font-weight: bold; border-radius: 4px;")
+        self.btn_acp_test.clicked.connect(self.on_lap_map_clicked)
+        layout.addWidget(self.btn_acp_test)
 
         group.setLayout(layout)
         self.control_layout.addWidget(group)
 
-    def create_solver(self,car, track, laps=1):
-        """
-        Creates the correct solver based on car configuration.
-        """
-        if car.model_type == "single_track":
-            return SingleTrackSolver(car, track, laps=laps)
-            
-        elif car.model_type == "mass_point":
-            return MassPointSolver(car, track,rk4=False, laps=laps)
+    # ==========================================
+    # core logic / sync
+    # ==========================================
+    def _sync_params_from_ui(self):
+        self.car_params["model_type"] = self.combo_model.currentData()
+        self.car_params["drs_allowed"] = self.check_drs.isChecked()
+        self.car_params["energy_limit"] = self.input_limit_e.value() if self.check_energy_limit.isChecked() else None
+        self.car_params["ds"] = self.input_ds.value()
+        self.car_params["soc_start"] = self.input_soc.value() # grab soc from UI
+
+    def _get_car_params(self):
+        self._sync_params_from_ui()
+        strict_params = self.car_params.copy()
         
-        elif car.model_type == "mass_point_rk4":
-            return MassPointSolver(car, track,rk4=True, laps=laps)
-            
-        else:
-            # Fallback
-            print(f"⚠️ Unknown model type '{car.model_type}', defaulting to MassPoint.")
-            return MassPointSolver(car, track, laps=laps)
+        strict_params.pop("laps", None)
+        strict_params.pop("ds", None) 
+        strict_params.pop("mass", None)
+        
+        p_kw = strict_params.pop("power_limit", 80.0)
+        strict_params["power_max"] = p_kw * 1000.0
+        
+        return strict_params
+
+    def closeEvent(self, event):
+        """ensures data is saved before the window is killed."""
+        self._sync_params_from_ui()
+        if self.current_vehicle_name:
+            ConfigManager.save_vehicle(self.current_vehicle_name, self.car_params)
+        super().closeEvent(event)
 
     # ==========================================
-    # DATA LOADING & TRACK PLOTTING
+    # track loading
     # ==========================================
-
     def load_track_list(self):
-        """Searches 'data/tracks_render' for files."""
         track_dir = "data/tracks"
         if not os.path.exists(track_dir):
             os.makedirs(track_dir)
@@ -276,7 +347,6 @@ class MainWindow(QMainWindow):
         track_names = [os.path.splitext(os.path.basename(f))[0] for f in files]
         
         current = self.combo_track.currentText()
-        
         self.combo_track.blockSignals(True) 
         self.combo_track.clear()
         
@@ -286,271 +356,100 @@ class MainWindow(QMainWindow):
             if idx >= 0:
                 self.combo_track.setCurrentIndex(idx)
         else:
-            self.combo_track.addItem("No tracks found")
+            self.combo_track.addItem("no tracks found")
             self.combo_track.setEnabled(False)
             
         self.combo_track.blockSignals(False)
         self.on_track_changed()
 
     def on_track_changed(self):
-        """Loads track preview using Track.load instead of from_csv."""
         track_name = self.combo_track.currentText()
-        if not track_name or track_name == "No tracks found":
+        if not track_name or track_name == "no tracks found":
             return
-
         try:
-            # Změna: Místo Track.from_csv(filepath) použijeme Track.load(track_name)
-            # Track.load si interně sáhne do správné složky (data/tracks)
             self.current_track = Track.load(track_name)
             self.plot_track_map(self.current_track)
             
-            # --- FEATURE: Auto-Calculate Laps ---
             dist_m = 22000
             laps = int(round(dist_m / self.current_track.length))
-            laps = max(1, laps)
-            
-            self.input_laps.setValue(laps)
-            print(f"Track loaded: {track_name} (L={self.current_track.length:.1f}m) -> Auto-set {laps} laps.")
-            
+            self.car_params["laps"] = max(1, laps)
         except Exception as e:
-            print(f"Error loading track '{track_name}': {e}")
-            self.track_plot_widget.clear()
-            self.track_plot_widget.setTitle(f"Error: {e}")
+            print(f"error loading track '{track_name}': {e}")
 
     def plot_track_map(self, track: Track):
-        # 1. Vyčištění celé figury (smaže i staré colorbary)
         self.mpl_canvas.fig.clf()
         ax = self.mpl_canvas.fig.add_subplot(111)
-        
-        # 2. Příprava dat
-        x = track.x
-        y = track.y
-        
-        # Získání Alpha (sklonu) ve stupních
-        if hasattr(track, 'alpha') and track.alpha is not None:
-            alpha_deg = np.degrees(track.alpha)
-            legend_flag = True
-        else:
-            alpha_deg = np.zeros_like(x)
-            legend_flag = False
+        x, y = track.x, track.y
+        alpha_deg = np.degrees(track.alpha) if hasattr(track, 'alpha') and track.alpha is not None else np.zeros_like(x)
 
-        # 3. Segmenty pro LineCollection
         points = np.array([x, y]).T.reshape(-1, 1, 2)
         segments = np.concatenate([points[:-1], points[1:]], axis=1)
 
-        # 4. Nastavení barev (Sklon)
-        # Rozsah -10° (modrá) až +10° (červená)
         norm = Normalize(vmin=np.min(alpha_deg), vmax=np.max(alpha_deg))
         lc = LineCollection(segments, cmap='viridis', norm=norm)
         lc.set_array(alpha_deg[:-1])
         lc.set_linewidth(3)
         ax.add_collection(lc)
 
-        # 5. Limity a Aspect Ratio
         ax.set_xlim(x.min() - 20, x.max() + 20)
         ax.set_ylim(y.min() - 20, y.max() + 20)
         ax.set_aspect('equal')
-
-        # 6. Start a Šipka
         ax.plot(x[0], y[0], 'o', color='lime', markersize=8, markeredgecolor='black')
-
-        if hasattr(track, 'psi') and track.psi is not None:
-            heading = track.psi[0]
-            ax.arrow(x[0], y[0], 
-                     np.cos(heading) * 40, np.sin(heading) * 40, 
-                     head_width=5, head_length=5, fc='black', ec='black')
-
-        # 7. Legenda (Colorbar)
-        # fraction=0.046 a pad=0.04 jsou "magická čísla" v Matplotlibu, 
-        # která zajistí, že výška legendy přesně odpovídá výšce grafu.
-        if legend_flag:
-            cb = self.mpl_canvas.fig.colorbar(lc, ax=ax, fraction=0.046, pad=0.04)
-            cb.set_label("Incline [deg]", size=10)
-            cb.outline.set_visible(False) # Odstraní rámeček kolem legendy pro čistší vzhled
-
-        # 8. Čistý vzhled (bez os)
         ax.axis('off')
-        
         self.mpl_canvas.draw()
   
     # ==========================================
-    # SIMULATION HANDLERS
+    # request handlers
     # ==========================================
-
     def on_run_single_clicked(self):
-        print("Preparing SINGLE LAP simulation...")
-        try:
-            track_name = self.combo_track.currentText()
-            sim_track = Track.load(track_name)
-        except: return
-
-        car = Car.from_ui_widget(self)
-        solver = self.create_solver(car, sim_track)
-        
-        self.loading_overlay.show_loading(text="Running single lap.", indefinite=True)
-        
-        self.ds_used = self.input_ds.value()
-        self.worker = SolverWorker(solver, car, sim_track, self.ds_used, mode=MODE_SINGLE)
-        
-        self.connect_worker_signals()
-        self.worker.start()
-
-    def on_run_endurance_clicked(self):
-        print("Preparing ENDURANCE simulation...")
-        try:
-            track_name = self.combo_track.currentText()
-            sim_track = Track.load(track_name)
-        except: return
-
-        car = Car.from_ui_widget(self)
-        laps_count = self.input_laps.value()
-        
-        # Override car limits for endurance
-        batt_kwh = self.input_battery_cap.value()
-        car.acp_capacity = batt_kwh # Store for solver usage
-        
-        solver = self.create_solver(car, sim_track, endurance=True, laps=laps_count)
-        
-        self.loading_overlay.show_loading(
-            text="Starting endurance...", 
-            indefinite=True,
-            progress_text_fmt="Simulating lap {} / {}..."
+        req = SingleLapRequest(
+            car_params=self._get_car_params(),
+            ds=self.input_ds.value(), 
+            track_name=self.combo_track.currentText()
         )
-        
-        self.ds_used = self.input_ds.value()
-        self.worker = SolverWorker(solver, car, sim_track, self.ds_used, laps=laps_count, mode=MODE_ENDURANCE)
-        
-        self.connect_worker_signals()
-        self.worker.start()
+        self.controller.handle_request(req)
+
+    def on_lap_map_clicked(self):
+        req = LapMapTestRequest(
+            car_params=self._get_car_params(),
+            ds=self.input_ds.value(), 
+            track_name=self.combo_track.currentText(),
+            laps=self.car_params["laps"] 
+        )
+        self.controller.handle_request(req)
 
     def on_endurance_strategy_clicked(self):
-       
-        try:
-            track_name = self.combo_track.currentText()
-            name = track_name+"_laptime_map_"
-            tracks_dir="data/tracks/lapmaps"
-            filepath = os.path.join(tracks_dir, f"{name}.npz")
-            self.laptime_map_plot = LaptimeAppMainWindow(filepath)
-            self.laptime_map_plot.optimization_requested.connect(self.start_strategy_optimization)
-            self.laptime_map_plot.deployment_requested.connect(self.run_deployment)
-            self.laptime_map_plot.show()
+        track_name = self.combo_track.currentText()
+        self.openStrategyRequested.emit(track_name)
 
+    def on_compare_clicked(self):
+        self.openCompareRequested.emit()
 
-        except Exception as e: 
-            QMessageBox.critical(self, "Error", f"Could not load laptime map:\n{e}")
-            return
-        
-
-    def start_strategy_optimization(self, regen_val, delta_val,min_e_target,max_e_target,map_data):
-       
-        car = Car.from_ui_widget(self)
-        laps_count = self.input_laps.value()
-        
-        laptime_interpolant = map_data['interpolant']
-    
-        solver = StrategyMaker(car,laptime_interpolant,laps_count,min_e_target+0.01,max_e_target-0.01)
-
-        self.loading_overlay.show_loading("Optimizing strategy...", indefinite=True,progress_text_fmt="Solving grid points ({} / {})")
-      
-        self.ds_used = self.input_ds.value()
-        car.regen_eff = regen_val
-        car.performance_delta = delta_val
-     
-        self.worker = SolverWorker(solver, car, None, self.ds_used, mode=MODE_STRATEGY_OPT, laps=laps_count)
-        
-        self.connect_worker_signals()
-        self.worker.progress.connect(self.loading_overlay.update_progress)
-        self.worker.progress.connect(self.laptime_map_plot.loading_overlay.update_progress)
-        self.worker.start()
-
-
-    def run_deployment(self,regen_val,delta_val,min_e_target,max_e_target,map_data):
-
-        car = Car.from_ui_widget(self)
-        laps_count = self.input_laps.value()
-        
-        laptime_interpolant = map_data['interpolant']
-        solver = StrategyMaker(car, laptime_interpolant, laps_count,min_e_target+0.01,max_e_target-0.01)
-
-        self.loading_overlay.show_loading("Calculating lap deployment...", indefinite=True)
-        
-        self.ds_used = self.input_ds.value()
-        car.regen_eff = regen_val
-        car.performance_delta = delta_val
-     
-        # ZMĚNA ZDE: mode=MODE_DEPLOYMENT_OPT
-        self.worker = SolverWorker(solver, car, None, self.ds_used, mode=MODE_DEPLOYMENT_OPT, laps=laps_count)
-        
-        self.connect_worker_signals()
-        self.worker.start()
-
-    
-
-        
-
-    def on_acp_test_clicked(self):
-        
-        try:
-             track_name = self.combo_track.currentText()
-             sim_track = Track.load(track_name)
-        except: return
-
-        car = Car.from_ui_widget(self)
-        
-        # Ensure we start with correct mass and capacity from UI
-        car.acp_capacity = self.input_battery_cap.value()
-
-        laps_count = self.input_laps.value()
-        
-        solver = MassPointSolver(car, sim_track,laps=laps_count)
-        
-        self.loading_overlay.show_loading(
-            text="Starting sensitivity analysis...", 
-            indefinite=True,
-            progress_text_fmt="Running lap {} / {}..."
-        )
-        
-        self.ds_used = self.input_ds.value()
-        self.worker = SolverWorker(solver, car, sim_track, self.ds_used, mode=MODE_ACP_TEST,laps=laps_count)
-        
-        self.connect_worker_signals()
-        self.worker.start()
-
-    def connect_worker_signals(self):
-        """Helper to connect standard worker signals."""
-        self.worker.finished.connect(self.on_solver_finished)
-        self.worker.error.connect(self.on_solver_error)
-        self.worker.progress.connect(self.loading_overlay.update_progress)
-        
-        
-
+    # ==========================================
+    # track generation wizard
+    # ==========================================
     def on_create_track_clicked(self):
-        """
-        Wizard pro vytvoření tratě z .mat logu.
-        """
-        fname, _ = QFileDialog.getOpenFileName(self, "Select telemetry log", "", "MAT Files (*.mat)")
+        fname, _ = QFileDialog.getOpenFileName(self, "select telemetry log", "", "MAT Files (*.mat)")
         if not fname: return
 
-        # Loading dat (to je rychlé, může být v main threadu, nebo taky ve workeru, ale nevadí to tolik)
-        self.loading_overlay.show_loading("Parsing Log Data...", indefinite=True)
+        self.loading_overlay.show_loading("parsing log data...", indefinite=True)
         QApplication.processEvents()
 
         try:
             data = TrackGenerator.filter_data(fname)
         except Exception as e:
             self.loading_overlay.hide_loading()
-            QMessageBox.critical(self, "Error", f"Failed to parse file:\n{e}")
+            QMessageBox.critical(self, "error", f"failed to parse file:\n{e}")
             return
             
         self.loading_overlay.hide_loading()
         if data is None: return
 
-        # Výběr módu
         msg = QMessageBox(self)
-        msg.setWindowTitle("Select track mode")
+        msg.setWindowTitle("select track mode")
         msg.setText("How do you want to define the track?")
-        btn_closed = msg.addButton("Closed track (endurance)", QMessageBox.ButtonRole.AcceptRole)
-        btn_open = msg.addButton("Open section (autocross)", QMessageBox.ButtonRole.RejectRole)
+        btn_closed = msg.addButton("closed track (endurance)", QMessageBox.ButtonRole.AcceptRole)
+        btn_open = msg.addButton("open section (autocross)", QMessageBox.ButtonRole.RejectRole)
         msg.addButton(QMessageBox.StandardButton.Cancel)
         msg.exec()
         
@@ -565,93 +464,92 @@ class MainWindow(QMainWindow):
 
         if not lap_info: return
 
-        # 
         default_name = f"track_{lap_info['time']:.2f}s.npz"
         save_path, _ = QFileDialog.getSaveFileName(
-            self, "Save Baked Track", 
+            self, "save baked track", 
             os.path.join("data/tracks", default_name), 
             "NumPy Zip (*.npz)"
         )
 
         if save_path:
-        
-            self.loading_overlay.show_loading("Smoothing track...", indefinite=True)
-            
+            self.loading_overlay.show_loading("smoothing track...", indefinite=True)
             self.track_worker = TrackGenerationWorker(data, lap_info, is_closed_mode, save_path)
             self.track_worker.finished.connect(self.on_track_generation_finished)
             self.track_worker.start()
 
     def on_track_generation_finished(self, success, message):
         self.loading_overlay.hide_loading()
-        
         if success:
-            QMessageBox.information(self, "Success", f"Track saved successfully!\n{message}")
+            QMessageBox.information(self, "success", f"track saved successfully!\n{message}")
             self.load_track_list()
-            
-            # Automaticky vybrat novou trať v Comboboxu
             track_name = os.path.splitext(os.path.basename(message))[0]
             idx = self.combo_track.findText(track_name)
             if idx >= 0:
                 self.combo_track.setCurrentIndex(idx)
         else:
-            QMessageBox.critical(self, "Error", f"Track generation failed:\n{message}")
+            QMessageBox.critical(self, "error", f"track generation failed:\n{message}")
 
-    # ==========================================
-    # RESULTS HANDLERS
-    # ==========================================
 
-    def on_solver_finished(self, res):
-        self.loading_overlay.hide_loading()
+class CarConfigDialog(QDialog):
+    def __init__(self, current_params, parent=None):
+        super().__init__(parent)
+        self.current_params = current_params.copy()
         
-        if hasattr(self, 'laptime_map_plot') and self.laptime_map_plot is not None:
-            self.laptime_map_plot.stop_loading()
-    
-        if res.kind == "single_lap":
-            res = res.data
-            self.results_window = ResultsWindow(res, self.worker.car, self.worker.track, ds=self.ds_used)
-            self.results_window.show()
-            return
-        
-        elif res.kind == "endurance":
-            self.results_window = EnduranceResultsWindow(res.data, self.worker.car, self.worker.track, ds=self.ds_used)
-            self.results_window.show()
-            return
-        
-        elif res.kind == "drs_test":
-            drs_data = res.data['drs']
-            nodrs_data = res.data['nodrs']
-            self.results_window = DRSResultsWindow(drs_data, nodrs_data)
-            self.results_window.show()
-            return
-        
-        elif res.kind == "acp_test":
-            self.sens_plotter = LaptimeSensitivityPlot(res.data,laps=self.worker.laps) 
-            self.sens_plotter.open_windows()
-            return
-        
-        elif res.kind == "endurance_map":
-        
-            if hasattr(self, 'laptime_map_plot') and self.laptime_map_plot is not None:
-                self.laptime_map_plot.add_result_tab(res)
-            return
-    
-        elif res.kind == "endurance_deployment":
-            if hasattr(self, 'laptime_map_plot') and self.laptime_map_plot is not None:
-                self.laptime_map_plot.add_result_tab(res)
-            return
-        
-        else:
-            print("Optimization failed!")
-            return
-        
+        self.setWindowTitle("Configure car")
+        self.setModal(True) 
+        self.resize(300, 250)
 
-    def on_solver_error(self, error_msg):
-        self.loading_overlay.hide_loading()
-        if hasattr(self, 'laptime_map_plot') and self.laptime_map_plot is not None:
-            self.laptime_map_plot.stop_loading()
-        print(f"Solver Error: {error_msg}")
+        layout = QVBoxLayout(self)
+        form_layout = QFormLayout()
 
-    def on_compare_clicked(self):
-        self.compare_window = CompareWindow()
-        self.compare_window.show()
-   
+        def create_spin(val, unit, min_val=0.0, max_val=10000.0, step=0.1):
+            spin = QDoubleSpinBox()
+            spin.setRange(min_val, max_val)
+            spin.setSingleStep(step)
+            spin.setSuffix(f" {unit}")
+            spin.setValue(val if val is not None else min_val)
+            return spin
+
+        self.input_weight = create_spin(current_params.get("weight"), "kg", min_val=150, step=0.5)
+        form_layout.addRow("Weight:", self.input_weight)
+        
+        self.input_cd = create_spin(current_params.get("cd"), "", step=0.01)
+        form_layout.addRow("Drag coeff (Cd):", self.input_cd)
+
+        self.input_cd_drs = create_spin(current_params.get("cd_drs"), "", step=0.01)
+        form_layout.addRow("Drag coeff DRS (Cd drs):", self.input_cd_drs)
+        
+        self.input_cl = create_spin(current_params.get("cl"), "", step=0.01)
+        form_layout.addRow("Downforce coeff (Cl):", self.input_cl)
+
+        self.input_cl_drs = create_spin(current_params.get("cl_drs"), "", step=0.01)
+        form_layout.addRow("Downforce coeff DRS (Cl drs):", self.input_cl_drs)
+
+        self.input_cop = create_spin(current_params.get("cop"), "", step=0.01)
+        form_layout.addRow("Center of pressure (CoP):", self.input_cop)
+        
+        self.input_power = create_spin(current_params.get("power_limit", 80.0), "kW", min_val=10.0, max_val=1000.0, step=1.0)
+        form_layout.addRow("Power limit:", self.input_power)
+        
+        self.input_regen = create_spin(current_params.get("regen_eff", 0.8), "", min_val=0.0, max_val=1.0, step=0.05)
+        form_layout.addRow("Regen factor:", self.input_regen)
+
+        layout.addLayout(form_layout)
+
+        self.button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
+        self.button_box.accepted.connect(self.accept)
+        self.button_box.rejected.connect(self.reject)
+        layout.addWidget(self.button_box)
+
+    def get_params(self):
+        self.current_params.update({
+            "weight": round(self.input_weight.value(),1),
+            "cd": round(self.input_cd.value(),2),
+            "cl": round(self.input_cl.value(),2),
+            "cd_drs": round(self.input_cd_drs.value(),2),
+            "cl_drs": round(self.input_cl_drs.value(),2),
+            "cop": round(self.input_cop.value(),2),
+            "power_limit": round(self.input_power.value(),1),
+            "regen_eff": round(self.input_regen.value(),2)
+        })
+        return self.current_params

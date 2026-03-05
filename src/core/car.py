@@ -6,16 +6,19 @@ import casadi as ca
 @dataclass
 class Car:
     # --- 1. Parameters from UI ---
-    mass: float           # [kg]
+    weight: float           # [kg]
     cd: float             # [-] 
     cl: float             # [-]
-    mu_x: float           # [-] 
-    mu_y: float           # [-] 
+    cd_drs: float 
+    cl_drs: float
     acp_capacity: float
     drs_allowed: bool
+    power_max: float 
+    regen_eff: float 
+    soc_start: float 
+    cop: float 
     energy_limit: float = None  # [kWh] 
     performance_delta: float = 0.0
-
 
     # Calculated fields 
     fz_static_f: float = field(init=False)
@@ -30,26 +33,24 @@ class Car:
     g = 9.81
 
     # Powertrain
-    power_max =80000
     brake_max = 60000
     power_eff = 0.88
-    regen_eff = 0.0
     fix_drag = 230
     wheel_radius = 0.205
     max_torque = 30.0
     gear_ratio = 11.46
     brake_bias = 0.55
     power_dist = 0.5
+    
+    #grip
+    mu_x: float = 1.25           # [-] 
+    mu_y: float = 1.25           # [-] 
+    
 
     #soc limitations
     soc_grid_power = [0.0, 0.04, 0.08, 0.12, 0.22, 0.32, 0.42, 0.52, 0.70, 1.00,1.1]
     power_limit_W = [10e3, 14e3, 21e3, 35e3, 62e3, 79e3, 89e3, 95e3, 100e3, 100e3,100e3]
     soc_to_power_interp = ca.interpolant('soc_power', 'bspline', [soc_grid_power], power_limit_W)
-   
-    # Aero
-    cd_drs = 1.17
-    cl_drs = 4.2
-    cop = 0.53
 
     # Suspension
     cogr = 0.5 
@@ -74,39 +75,14 @@ class Car:
 
     def __post_init__(self):
         # calculate static weight
-        self.fz_static_f = self.mass * self.g * (1 - self.weight_distrib)
-        self.fz_static_r = self.mass * self.g * self.weight_distrib
+        self.fz_static_f = self.weight * self.g * (1 - self.weight_distrib)
+        self.fz_static_r = self.weight * self.g * self.weight_distrib
         #self.cs_static_f = self.get_cornering_stiffness(self.fz_static_f)
         #self.cs_static_r = self.get_cornering_stiffness(self.fz_static_r)
         #print(f"cornering stiffness front: {self.cs_static_f}")
         self.cs_static_f = 2 * self.get_cornering_stiffness(self.fz_static_f/2)
         self.cs_static_r = 2 * self.get_cornering_stiffness(self.fz_static_r/2)
 
-    @classmethod
-    def from_ui_widget(cls, ui):
-        """
-        Creates car instance from UI widget (MainWindow).
-        """
-       
-        if ui.check_energy_limit.isChecked():
-            e_lim = ui.input_limit_e.value()
-        else:
-            e_lim = None 
-
-        model_data = ui.combo_model.currentData()
-        
-        return cls(
-            mass = ui.input_mass.value(),
-            cd = ui.input_cd.value(),
-            cl = ui.input_cl.value(),
-            mu_x = ui.input_mu_x.value(),
-            mu_y = ui.input_mu_y.value(),
-            energy_limit = e_lim,
-            acp_capacity = ui.input_battery_cap.value(),
-            drs_allowed = ui.check_drs.isChecked(),
-            model_type = model_data
-        )
-    
 
     # car calculation functions 
     def get_aero_drag(self, v, cd = None):
@@ -152,22 +128,18 @@ class Car:
         return Ff, Fr
     
         
-    def get_friction_limit(self,v, mass = None, mu_x = None,mu_y = None, cl = None):
+    def get_friction_limit(self, v, weight=None, use_cl=None):
+        weight = weight if weight is not None else self.weight
+        use_cl = use_cl if use_cl is not None else self.cl
 
-        use_mass = mass if mass is not None else self.mass
-        use_mu_x = mu_x if mu_x is not None else self.mu_x
-        use_mu_y = mu_y if mu_y is not None else self.mu_y
-        use_cl = cl if cl is not None else self.cl
-        
         F_aero = 0.5 * self.rho * use_cl * v**2
 
-        Fz = use_mass*self.g + F_aero
-        #calcualte max force in x
-        max_x = use_mu_x*Fz
-        #calculate max force in y
-        max_y = use_mu_y*Fz
+        Fz = weight * self.g + F_aero
         
-        # (max_longitudinal, max_lateral)
+        # OPRAVA: Tady musí být násobení self.mu_x a self.mu_y, nikoliv weight!
+        max_x = self.mu_x * Fz
+        max_y = self.mu_y * Fz
+        
         return (max_x, max_y)
     
 

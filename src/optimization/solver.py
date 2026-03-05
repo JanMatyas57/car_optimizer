@@ -74,18 +74,16 @@ class MassPointSolver:
         # =========================
         # Parameters
         # =========================
-        p_mass = opti.parameter()
+        p_weight = opti.parameter()
         p_cl   = opti.parameter()
         p_cd   = opti.parameter()
-        p_mu_x = opti.parameter()
-        p_mu_y = opti.parameter()
+ 
 
         # Set params values
-        opti.set_value(p_mass, self.car.mass)
+        opti.set_value(p_weight, self.car.weight)
         opti.set_value(p_cl,   self.car.cl)
         opti.set_value(p_cd,   self.car.cd)
-        opti.set_value(p_mu_x, self.car.mu_x)
-        opti.set_value(p_mu_y, self.car.mu_y)
+   
 
         # =========================
         # Track data
@@ -141,14 +139,12 @@ class MassPointSolver:
 
         F_max_x, F_max_y = Car.get_friction_limit(
             self.car, v_k,
-            mass=p_mass,
-            mu_x=p_mu_x,
-            mu_y=p_mu_y,
-            cl=cl_eff
+            weight=p_weight,
+            use_cl=cl_eff
         )
 
         # Lateral Force: F_lat = m * v^2 * curvature
-        F_lat = p_mass * v_k**2 * ca.fabs(kappa_grid[:-1])
+        F_lat = p_weight * v_k**2 * ca.fabs(kappa_grid[:-1])
 
         # Longitudinal force
         F_long_k = F_acc + F_brake
@@ -175,7 +171,7 @@ class MassPointSolver:
         # Dynamics
         # =========================
         F_net = F_long_k - F_drag
-        acc = F_net / p_mass
+        acc = F_net / p_weight
 
         # Speed integration: v^2 = v0^2 + 2*a*ds
         v_next_sq = v_k**2 + 2 * acc * ds
@@ -256,7 +252,7 @@ class MassPointSolver:
         # =========================
         J_Time = T[-1]
 
-        F_norm_factor = (self.car.mass * self.car.g)**2
+        F_norm_factor = (self.car.weight * self.car.g)**2
         J_overlap = 0.004 * ca.sum1((F_acc * -F_brake) / F_norm_factor)
 
         J_final_v = 0.1 * v[-1]
@@ -275,7 +271,7 @@ class MassPointSolver:
         # Solver setup
         # =========================
         p_opts = {"expand": True}
-        s_opts = {"max_iter": 5600, "tol": 1e-2, "print_level": 5}
+        s_opts = {"max_iter": 2600, "tol": 1e-2, "print_level": 5}
 
         opti.solver("ipopt", p_opts, s_opts)
 
@@ -287,14 +283,12 @@ class MassPointSolver:
             # =========================
             L = opti.f + ca.dot(opti.lam_g, opti.g)
 
-            sens_m   = sol.value(ca.jacobian(L, p_mass))
+            sens_w   = sol.value(ca.jacobian(L, p_weight))
             sens_cl  = sol.value(ca.jacobian(L, p_cl))
             sens_cd  = sol.value(ca.jacobian(L, p_cd))
-            sens_mux = sol.value(ca.jacobian(L, p_mu_x))
-            sens_muy = sol.value(ca.jacobian(L, p_mu_y))
-
+         
             print("sensitivity results")
-            print(f"Mass: {sens_m:+.4f} s/kg")
+            print(f"Weight: {sens_w:+.4f} s/kg")
             print(f"CL:   {sens_cl:+.4f} s/unit")
             print(f"CdA:  {sens_cd:+.4f} s/unit")
 
@@ -311,11 +305,9 @@ class MassPointSolver:
                 recuperation=sol.value(P_recuperated*self.car.regen_eff),
                 drs_usage=sol.value(drs_ef),
                 sens={
-                    "dTime_dm": sens_m,
+                    "dTime_dm": sens_w,
                     "dTime_dCL": sens_cl,
                     "dTime_dCdA": sens_cd,
-                    "dTime_dMuX": sens_mux,
-                    "dTime_dMuY": sens_muy
                 }
             )
 
@@ -330,18 +322,16 @@ class MassPointSolver:
         # =========================
         # Parameters
         # =========================
-        p_mass = opti.parameter()
+        p_weight = opti.parameter()
         p_cl   = opti.parameter()
         p_cd   = opti.parameter()
-        p_mu_x = opti.parameter()
-        p_mu_y = opti.parameter()
+     
 
         # Set params values
-        opti.set_value(p_mass, self.car.mass)
+        opti.set_value(p_weight, self.car.weight)
         opti.set_value(p_cl,   self.car.cl)
         opti.set_value(p_cd,   self.car.cd)
-        opti.set_value(p_mu_x, self.car.mu_x)
-        opti.set_value(p_mu_y, self.car.mu_y)
+
 
         # =========================
         # Track data
@@ -397,14 +387,12 @@ class MassPointSolver:
 
         F_max_x, F_max_y = Car.get_friction_limit(
             self.car, v_k,
-            mass=p_mass,
-            mu_x=p_mu_x,
-            mu_y=p_mu_y,
-            cl=cl_eff
+            weight=p_weight,    
+            use_cl=cl_eff
         )
 
         # Lateral Force: F_lat = m * v^2 * curvature
-        F_lat = p_mass * v_k**2 * ca.fabs(kappa_grid[:-1])
+        F_lat = p_weight * v_k**2 * ca.fabs(kappa_grid[:-1])
 
         # Longitudinal force
         F_long_k = F_acc + F_brake
@@ -444,7 +432,7 @@ class MassPointSolver:
             # Odpor se průběžně mění s rychlostí uvnitř RK4 sub-kroků
             f_drag_step = Car.get_aero_drag(self.car, v_val, cd=cd_eff)
             f_net_step = F_long_k - f_drag_step
-            acc_step = f_net_step / p_mass
+            acc_step = f_net_step / p_weight
             
             dv_ds = acc_step / v_val
             dT_ds = 1.0 / v_val
@@ -517,7 +505,7 @@ class MassPointSolver:
         # =========================
         J_Time = T[-1]
 
-        F_norm_factor = (self.car.mass * self.car.g)**2
+        F_norm_factor = (self.car.weight * self.car.g)**2
         J_overlap = 0.004 * ca.sum1((F_acc * -F_brake) / F_norm_factor)
 
         J_final_v = 0.1 * v[-1]
@@ -529,14 +517,8 @@ class MassPointSolver:
         # =========================
         # Initial guess
         # =========================
-        if init_guess is not None:
-            #opti.set_initial(v, init_guess['v'])
-            #opti.set_initial(F_acc, init_guess['F_acc'])
-            pass
-            #tady pridat toho vic
-        else:
-            opti.set_initial(v, 15.0)
-            opti.set_initial(F_acc, 100.0)
+        opti.set_initial(v, 15.0)
+        opti.set_initial(F_acc, 100.0)
 
         # =========================
         # Solver setup
@@ -554,14 +536,13 @@ class MassPointSolver:
             # =========================
             L = opti.f + ca.dot(opti.lam_g, opti.g)
 
-            sens_m   = sol.value(ca.jacobian(L, p_mass))
+            sens_w   = sol.value(ca.jacobian(L, p_weight))
             sens_cl  = sol.value(ca.jacobian(L, p_cl))
             sens_cd  = sol.value(ca.jacobian(L, p_cd))
-            sens_mux = sol.value(ca.jacobian(L, p_mu_x))
-            sens_muy = sol.value(ca.jacobian(L, p_mu_y))
+         
 
             print("sensitivity results")
-            print(f"Mass: {sens_m:+.4f} s/kg")
+            print(f"Weight: {sens_w:+.4f} s/kg")
             print(f"CL:   {sens_cl:+.4f} s/unit")
             print(f"CdA:  {sens_cd:+.4f} s/unit")
 
@@ -578,11 +559,9 @@ class MassPointSolver:
                 recuperation=sol.value(P_recuperated*self.car.regen_eff),
                 drs_usage=sol.value(drs_ef),
                 sens={
-                    "dTime_dm": sens_m,
+                    "dTime_dm": sens_w,
                     "dTime_dCL": sens_cl,
                     "dTime_dCdA": sens_cd,
-                    "dTime_dMuX": sens_mux,
-                    "dTime_dMuY": sens_muy
                 }
             )
 
@@ -1667,36 +1646,6 @@ def calculate_initial_guess(car,track, init_cond: InitConditions, ds=1.0):
         dE = P_mech * dt_vec / 3.6e6 
         E_guess = np.concatenate(([init_cond.E], np.cumsum(dE) + init_cond.E))
 
-        '''
-        plt.figure(figsize=(10, 8))
-            
-        plt.subplot(4,1,1)
-        plt.plot(s_sim, v_smooth * 3.6, label='Speed [km/h]') # s_sim (N+1) vs v (N+1) -> OK
-        plt.ylabel('v [km/h]')
-        plt.grid(True)
-            
-        plt.subplot(4,1,2)
-            # POZOR: s_sim[:-1] pro síly (protože síly jsou na intervalech)
-        plt.plot(s_sim[:-1], F_acc_guess, 'g', label='F Acc [N]') 
-        plt.plot(s_sim[:-1], F_brake_guess, 'r', label='F Brake [N]')
-        plt.ylabel('Force [N]')
-        plt.legend()
-        plt.grid(True)
-            
-        plt.subplot(4,1,3)
-        plt.plot(s_sim, E_guess, label='Energy [kWh]') # s_sim (N+1) vs E (N+1) -> OK
-        plt.ylabel('E [kWh]')
-        plt.grid(True)
-            
-        plt.subplot(4,1,4)
-        plt.plot(s_sim, T_guess, label='Time [s]') # s_sim (N+1) vs T (N+1) -> OK
-        plt.ylabel('T [s]')
-        plt.xlabel('Distance [m]')
-        plt.grid(True)
-            
-        plt.tight_layout()
-        plt.show()
-        '''
         return {
             'v': np.array(v_smooth).flatten(),       
             'T': np.array(T_guess).flatten(),        
@@ -1705,196 +1654,3 @@ def calculate_initial_guess(car,track, init_cond: InitConditions, ds=1.0):
             'F_brake': np.array(F_brake_guess).flatten()
         }
 
-@staticmethod
-def calculate_initial_guess_single(car, track, init_cond: 'InitConditions', ds=1.0):
-        """
-    
-        1. Longitudinal: Forward-backward integrace
-        2. Lateral: Steady-state bicycle model
-        """
-       
-        total_length = track.length
-        N = int(np.round(total_length / ds))
-        s_sim = np.linspace(0, total_length, N + 1)
-        ds_const = total_length / N 
-        
-        # Track data
-        kappa_dm = track.get_curvature(s_sim)
-        kappa = np.array(kappa_dm).flatten()
-        psi_track = np.array(track.get_heading(s_sim)).flatten()
-        
-        
-        try:
-             x_track = np.interp(s_sim, track.s, track.x)
-             y_track = np.interp(s_sim, track.s, track.y)
-        except:
-             x_track = np.zeros_like(s_sim)
-             y_track = np.zeros_like(s_sim)
-
-        # Car parametry
-        m = car.mass
-        g = car.g
-        rho = car.rho
-     
-        Cl = car.cl 
-        Cd = car.cd 
-        mu_x = car.mu_x * 0.95 # Malá rezerva pro warm start
-        mu_y = car.mu_y * 0.95
-        
-        lf = car.lf
-        lr = car.lr
-        L = car.wheelbase
-        cop = car.cop 
-
-      
-        #longitudinal profile
-        #   
-        v_max_car = 40.0 # [m/s]
-        v_curve = np.full(N+1, v_max_car)
-        
-        # Limit v zatáčkách: m*v^2*k <= mu_y * Fz
-        # Fz = mg + 0.5*rho*Cl*v^2
-        term_aero = 0.5 * rho * Cl
-        denom = m * np.abs(kappa) - mu_y * term_aero
-        
-        mask = denom > 0
-        v_sq_limit = (mu_y * m * g) / denom[mask]
-        v_curve[mask] = np.sqrt(v_sq_limit)
-        v_curve = np.minimum(v_curve, v_max_car)
-
-        # A) Forward 
-        v_fwd = np.zeros(N+1)
-        v_fwd[0] = max(init_cond.v, 5.0)
-        
-        for k in range(N):
-            v_curr = v_fwd[k]
-            F_drag = 0.5 * rho * Cd * v_curr**2
-            F_z = m*g + 0.5 * rho * Cl * v_curr**2
-            
-            F_grip_long = mu_x * F_z
-            F_power = car.power_max / max(v_curr, 1.0) * car.power_eff
-            
-            F_acc_avail = min(F_grip_long, F_power) - F_drag
-            acc = F_acc_avail / m
-            
-            v_next = np.sqrt(max(v_curr**2 + 2 * acc * ds_const, 1.0))
-            v_fwd[k+1] = min(v_next, v_curve[k+1])
-
-        # B) Backward 
-        v_bwd = np.zeros(N+1)
-        v_bwd[-1] = v_fwd[-1]
-        
-        for k in range(N, 0, -1):
-            v_curr = v_bwd[k]
-            
-            # 1. Síly od prostředí
-            F_drag = 0.5 * rho * Cd * v_curr**2
-            F_z = m*g + 0.5 * rho * Cl * v_curr**2
-            
-            # 2. Limit přilnavosti (Grip)
-            F_grip_long = mu_x * F_z
-            
-            # 3. Limit výkonu (Power) -> F = P / v
-            #    Používáme max(v, 1.0) aby nedošlo k dělení nulou
-            F_power_limit = abs(car.brake_max) / max(v_curr, 1.0)
-            
-            # 4. Určení limitní brzdné síly kol
-            #    Auto nemůže brzdit víc, než dovolí grip, A ZÁROVEŇ 
-            #    nemůže brzdit víc, než dovolí motory (pokud nemá mechanické brzdy).
-            F_brake_effective = min(F_grip_long, F_power_limit)
-            
-            # 5. Výpočet maximální možné dekelerace
-            #    (Brzdná síla kol + Odpor vzduchu) / m
-            dec_max = (F_brake_effective + F_drag) / m
-            
-            # 6. Kinematika zpětného chodu
-            #    v_prev^2 = v_curr^2 + 2 * a * s
-            v_prev_sq = v_curr**2 + 2 * dec_max * ds_const
-            v_prev = np.sqrt(v_prev_sq)
-            
-            # 7. Aplikace limitů (zatáčka, forward pass)
-            v_bwd[k-1] = min(v_prev, v_curve[k-1], v_fwd[k-1])
-
-        v_smooth = v_bwd # Finální rychlost
-
-        #lateral dynamics
-    
-        F_lat_total = m * v_smooth**2 * kappa
-        
-        # (Static + Aero distribution)
-   
-        Fz_total = m*g + 0.5 * rho * Cl * v_smooth**2
-        Fz_aero = 0.5 * rho * Cl * v_smooth**2
-        
-        # Rozdělení Fz
-        Fz_f = car.fz_static_f + Fz_aero * (1 - cop)
-        Fz_r = car.fz_static_r + Fz_aero * cop
-        
-        # moment equation to center of mass
-        # Fy_f * lf = Fy_r * lr => Fy_r = Fy_f * lf/lr
-        # Fy_f + Fy_r = F_lat_total
-      
-        Fy_f_req = F_lat_total * (lr / L)
-        Fy_r_req = F_lat_total * (lf / L)
-        
-        # --- inverse tire model
-        #  Fy = (alpha_deg / 5.0) * Fz * mu_y
-        # inverse: alpha_deg = (Fy / (Fz * mu_y)) * 5.0
-        
-        max_Fy_f = Fz_f * mu_y
-        max_Fy_r = Fz_r * mu_y
-        
-        Fy_f_eff = np.clip(Fy_f_req, -max_Fy_f, max_Fy_f)
-        Fy_r_eff = np.clip(Fy_r_req, -max_Fy_r, max_Fy_r)
-
-        OPTIMAL_SLIP_ANGLE_DEG = 6.0
-
-        ratio_f = Fy_f_eff / np.maximum(max_Fy_f, 1.0) # prevence /0
-        ratio_r = Fy_r_eff / np.maximum(max_Fy_r, 1.0)
-        
-        alpha_f_deg = ratio_f * OPTIMAL_SLIP_ANGLE_DEG
-        alpha_r_deg = ratio_r * OPTIMAL_SLIP_ANGLE_DEG
-        
-    
-        alpha_f_rad = np.radians(alpha_f_deg)
-        alpha_r_rad = np.radians(alpha_r_deg)
-        
-  
-        delta_guess = L * kappa + alpha_f_rad - alpha_r_rad
-        
-  
-        delta_guess = np.clip(delta_guess, -car.steeringAngle_max, car.steeringAngle_max)
-
-        # outputs
-        
-        acc_req = np.diff(v_smooth**2, prepend=v_smooth[0]**2) / (2 * ds_const)
-        F_net = m * acc_req
-        F_drag_vec = 0.5 * rho * Cd * v_smooth**2
-        F_total_req = F_net + F_drag_vec
-        
-        F_acc_guess = np.maximum(F_total_req, 0)
-        F_brake_guess = np.minimum(F_total_req, 0)
-        
-   
-        dt_vec = ds_const / np.maximum(v_smooth, 1.0)
-        t_guess = np.cumsum(dt_vec)
-        
-        # Yaw rate
-        r_guess = v_smooth * kappa
-
-        return {
-            'v': v_smooth,
-            'vy': np.zeros_like(v_smooth), 
-            'r': r_guess,
-            'psi': psi_track,
-            'x': x_track,
-            'y': y_track,
-            'n': np.zeros_like(v_smooth),
-            'xi': np.zeros_like(v_smooth), # Heading error relative to track
-            'F_acc': F_acc_guess[:-1],
-            'F_brake': F_brake_guess[:-1],
-            'delta': delta_guess[:-1],
-            't': t_guess,
-            's': s_sim,
-            'drs_usage':np.zeros(N)
-        }

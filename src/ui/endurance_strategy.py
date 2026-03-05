@@ -26,7 +26,7 @@ class MapTab(QWidget):
         # --- UI Layout ---
         main_layout = QVBoxLayout(self) 
         
-        # Matplotlib Canvas 
+        # Matplotlib Canvas F
         self.fig = Figure(figsize=(8, 6), dpi=100)
         self.canvas = FigureCanvasQTAgg(self.fig)
                 
@@ -319,7 +319,7 @@ class LaptimeAppMainWindow(QWidget):
         
         
 
-    def stop_loading(self):
+    def stop_loading(self, *args, **kwargs):
         self.loading_overlay.hide_loading()
 
 class StrategyResultTab(QWidget):
