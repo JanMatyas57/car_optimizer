@@ -30,7 +30,7 @@ class ResultsWindow(QWidget):
         self.track = track
         self.ds = ds
 
-        self.resize(1100, 850)
+        
         self.center_window()
         self.setWindowTitle(f"Simulation results - {res.lap_time:.3f} s")
         
@@ -112,6 +112,9 @@ class ResultsWindow(QWidget):
         self.init_drs_map_tab()
         self.init_soc_tab()
 
+        self.setWindowState(Qt.WindowState.WindowMaximized)
+        self.show()
+
     def center_window(self):
         qr = self.frameGeometry()
         cp = QApplication.primaryScreen().availableGeometry().center()
@@ -121,10 +124,11 @@ class ResultsWindow(QWidget):
 
     def _style_plot(self, plot, title, y_label, units):
         """Pomocná metoda pro krásný čistý vzhled pyqtgraph plotů"""
-        plot.setBackground('#ffffff')
+        plot.setBackground("#FFFFFF")
         plot.setTitle(title, color='#0f172a', size='12pt', bold=True)
         plot.setLabel('left', y_label, units=units, color='#64748b')
         plot.setLabel('bottom', 'Distance', units='m', color='#64748b')
+        
         
         # Obarvení os a textu na jemnou šedou
         ax_pen = pg.mkPen(color='#94a3b8', width=1)
@@ -139,34 +143,48 @@ class ResultsWindow(QWidget):
 
     def init_summary_panel(self):
         group = QGroupBox("Lap Summary")
+        group.setObjectName("HighlightedGroup")
         main_h_layout = QHBoxLayout() 
         main_h_layout.setContentsMargins(15, 15, 15, 15)
         
         stats_widget = QWidget()
         grid = QGridLayout(stats_widget)
         grid.setContentsMargins(0, 0, 0, 0)
-        grid.setHorizontalSpacing(30)
+        grid.setHorizontalSpacing(40) # Mírně zvětšen rozestup pro více dat
+        stats_widget.setStyleSheet("background-color: transparent;")
         
         def add_stat(row, col, label, value, unit):
             lbl_name = QLabel(f"<b>{label}:</b>")
-            lbl_name.setStyleSheet("color: #64748b; font-size: 13px;")
+            lbl_name.setStyleSheet("color: #64748b; font-size: 13px; background-color: transparent;")
             lbl_val = QLabel(f"{value}")
-            lbl_val.setStyleSheet("color: #3b82f6; font-size: 16px; font-weight: bold;")
+            lbl_val.setStyleSheet("color: #3b82f6; font-size: 16px; font-weight: bold; background-color: transparent;")
             lbl_unit = QLabel(unit)
-            lbl_unit.setStyleSheet("color: #94a3b8; font-size: 13px;")
+            lbl_unit.setStyleSheet("color: #94a3b8; font-size: 13px; background-color: transparent;")
             
             grid.addWidget(lbl_name, row, col)
             grid.addWidget(lbl_val, row, col+1)
             grid.addWidget(lbl_unit, row, col+2)
 
+        # Výpočty dat
         max_v = np.max(self.res.v) * 3.6
         avg_v = np.mean(self.res.v) * 3.6
         total_energy = self.res.E[-1] - self.res.E[0]
         
+        # Získání SoC hodnot (ošetření pokud res.SoC neexistuje)
+        soc_start = self.res.SoC[0] if self.res.SoC is not None else 0.0
+        soc_end = self.res.SoC[-1] if self.res.SoC is not None else 0.0
+
+        # První sloupec statistik
         add_stat(0, 0, "Lap Time", f"{self.res.lap_time:.3f}", "s")
-        add_stat(0, 3, "Energy Used", f"{total_energy:.3f}", "kWh")
         add_stat(1, 0, "Max Speed", f"{max_v:.1f}", "km/h")
+        
+        # Druhý sloupec statistik
+        add_stat(0, 3, "Energy Used", f"{total_energy:.3f}", "kWh")
         add_stat(1, 3, "Avg Speed", f"{avg_v:.1f}", "km/h")
+
+        # Třetí sloupec statistik (SoC data)
+        add_stat(0, 6, "SoC Start", f"{soc_start:.1f}", "%")
+        add_stat(1, 6, "SoC End", f"{soc_end:.1f}", "%")
         
         main_h_layout.addWidget(stats_widget)
         main_h_layout.addStretch()
@@ -499,14 +517,24 @@ class ResultsWindow(QWidget):
             'Downforce (Cl)': {'val': self.car.cl, 'sens': raw.get('dTime_dCL', 0.0), 'unit': '-'}
         }
 
-        control_group = QGroupBox("Scenario Configuration (Multi-Parametric Analysis)")
+        control_group = QGroupBox("Scenario Configuration)")
+        
+        control_group.setObjectName("HighlightedGroup")
+        
+
         grid = QGridLayout()
         grid.setSpacing(15) 
         
-        grid.addWidget(QLabel("<b>Parameter</b>"), 0, 0)
-        grid.addWidget(QLabel("<b>Base Value</b>"), 0, 1)
-        grid.addWidget(QLabel("<b>Change (%)</b>"), 0, 2)
-        grid.addWidget(QLabel("<b>Delta Time</b>"), 0, 3) 
+        # Hlavičky s průhledným pozadím
+        def create_header(text):
+            lbl = QLabel(f"<b>{text}</b>")
+            lbl.setStyleSheet("background-color: transparent; color: #334155;")
+            return lbl
+
+        grid.addWidget(create_header("Parameter"), 0, 0)
+        grid.addWidget(create_header("Base Value"), 0, 1)
+        grid.addWidget(create_header("Change (%)"), 0, 2)
+        grid.addWidget(create_header("Delta Time"), 0, 3) 
 
         self.inputs = {} 
         self.deltas_labels = {}
@@ -514,8 +542,10 @@ class ResultsWindow(QWidget):
         row = 1
         for name, data in self.scenario_data.items():
             lbl_name = QLabel(name)
+            lbl_name.setStyleSheet("background-color: transparent; color: #334155; font-weight: bold;")
+            
             lbl_val = QLabel(f"{data['val']:.3f} {data['unit']}")
-            lbl_val.setStyleSheet("color: #64748b; font-family: Consolas;")
+            lbl_val.setStyleSheet("background-color: transparent; color: #64748b; font-family: Consolas;")
             
             spin = QDoubleSpinBox()
             spin.setRange(-50.0, 50.0)
@@ -528,7 +558,7 @@ class ResultsWindow(QWidget):
             
             lbl_delta = QLabel("0.000 s")
             lbl_delta.setAlignment(Qt.AlignmentFlag.AlignRight)
-            lbl_delta.setStyleSheet("font-family: Consolas; font-weight: bold; color: #475569;")
+            lbl_delta.setStyleSheet("background-color: transparent; font-family: Consolas; font-weight: bold; color: #475569;")
             self.deltas_labels[name] = lbl_delta
 
             grid.addWidget(lbl_name, row, 0)
@@ -538,7 +568,7 @@ class ResultsWindow(QWidget):
             row += 1
 
         btn_reset = QPushButton("Reset All")
-        btn_reset.setStyleSheet("background-color: #64748b;")
+        btn_reset.setStyleSheet("background-color: #64748b; color: white;")
         btn_reset.clicked.connect(self.reset_scenario)
         grid.addWidget(btn_reset, row, 2, 1, 2)
 
@@ -548,8 +578,8 @@ class ResultsWindow(QWidget):
         self.lbl_scenario_results = QLabel()
         self.lbl_scenario_results.setTextFormat(Qt.TextFormat.RichText)
         self.lbl_scenario_results.setStyleSheet("""
-            background-color: #ffffff; 
-            border: 1px solid #e2e8f0; 
+            background-color: #f1f5f9; 
+            border: 1px solid #cbd5e1; 
             border-radius: 8px;
             padding: 30px; 
             margin-top: 15px;
@@ -582,7 +612,7 @@ class ResultsWindow(QWidget):
             
             color = "#10b981" if d_time < 0 else "#ef4444" if d_time > 0 else "#94a3b8"
             sign = "+" if d_time > 0 else ""
-            self.deltas_labels[name].setText(f"<span style='color:{color}'>{sign}{d_time:.4f} s</span>")
+            self.deltas_labels[name].setText(f"<span style='color:{color}; background-color: transparent;'>{sign}{d_time:.4f} s</span>")
 
         base_time = self.res.lap_time
         new_time = base_time + total_dt
@@ -599,7 +629,7 @@ class ResultsWindow(QWidget):
             <div style='font-size: 24px; color: {diff_color}; font-weight: bold;'>
                 ({diff_sign}{total_dt:.3f} s)
             </div>
-            <div style='margin-top: 25px; font-size: 15px; color: #94a3b8; border-top: 1px solid #e2e8f0; padding-top: 15px;'>
+            <div style='margin-top: 25px; font-size: 15px; color: #64748b; border-top: 1px solid #cbd5e1; padding-top: 15px;'>
                 Baseline: {base_time:.3f} s
             </div>
         </div>

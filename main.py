@@ -9,6 +9,7 @@ from src.ui.main_window import MainWindow
 from src.ui.results_window import ResultsWindow
 from src.ui.endurance_strategy import LaptimeAppMainWindow
 from src.ui.endurance_results import EnduranceResultsWindow
+from src.ui.style_manager import StyleManager
 from src.handlers.controller import SimulationController
 from src.optimization.work_thread import SimulationWorker
 from src.handlers.requests import StrategyOptRequest, DeploymentOptRequest
@@ -152,6 +153,9 @@ if __name__ == "__main__":
         pass # Not on windows
 
     app = QApplication(sys.argv)
+
+    global_style = StyleManager.get_global_stylesheet()
+    app.setStyleSheet(global_style)
 
     icon_path = os.path.join("data", "logo.png")
     app_icon = QIcon(icon_path)

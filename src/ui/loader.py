@@ -8,11 +8,18 @@ class LoadingOverlay(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, False) 
         self.hide()
         
-        self.setAutoFillBackground(True)
-        palette = self.palette()
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+     
         # Poloprůhledné černé pozadí
-        palette.setColor(QPalette.ColorRole.Window, QColor(0, 0, 0, 200))
-        self.setPalette(palette)
+        self.setObjectName("LoadingOverlay")
+        self.setStyleSheet("""
+            QWidget#LoadingOverlay {
+                background-color: rgba(0, 0, 0, 200);
+            }
+            QLabel {
+                background: transparent;
+            }
+        """)
         
         # Layout
         layout = QVBoxLayout()

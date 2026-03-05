@@ -9,6 +9,8 @@
 - src\core\__init__.py
 - src\core\vehicles\CTU25.json
 - src\core\vehicles\CTU26.json
+- src\core\vehicles\CTU27.json
+- src\core\vehicles\default_car.json
 - src\handlers\controller.py
 - src\handlers\requests.py
 - src\handlers\__init___.py
@@ -29,6 +31,7 @@
 - src\ui\results_tab.py
 - src\ui\results_window.py
 - src\ui\sensitivity_plot.py
+- src\ui\style_manager.py
 - src\ui\__init__.py
 - src\utils\config_manager.py
 - src\utils\drs_69.py
@@ -123,70 +126,71 @@ classDiagram
         +dict meta
     }
 
-    %% Vztahy
-    SimulationApp *-- SimulationController : Drží instanci
-    SimulationApp *-- MainWindow : Drží instanci
+    %% Relationships
+    SimulationApp *-- SimulationController : Holds instance
+    SimulationApp *-- MainWindow : Holds instance
     
-    MainWindow ..> BaseRequest : Vytváří DTO
-    MainWindow --> SimulationController : Volá handle_request(req)
+    MainWindow ..> BaseRequest : Creates DTO
+    MainWindow --> SimulationController : Calls handle_request(req)
     
-    SimulationController ..> SimulationTask : Vytváří podle Requestu
-    SimulationController *-- SimulationWorker : Spravuje vlákno
+    SimulationController ..> SimulationTask : Creates based on Request
+    SimulationController *-- SimulationWorker : Manages thread
     
-    SimulationWorker o-- SimulationTask : Vykonává
-    SimulationTask ..> SolverPayload : Vrací
+    SimulationWorker o-- SimulationTask : Executes
+    SimulationTask ..> SolverPayload : Returns
 ```
 
 ## 2. State diagram 
 
 
 ```mermaid
-stateDiagram-v2
-    [*] --> Idle: Aplikace čeká na uživatele
 
-    state "UI Vrstva (MainWindow / StrategyWindow)" as UI {
-        Idle --> CteniVstupu: Klik na tlačítko (např. Run Single Lap)
-        CteniVstupu --> TvorbaRequestu: Vytvoření DTO (např. SingleLapRequest)
-        TvorbaRequestu --> Odeslani: controller.handle_request(req)
+stateDiagram-v2
+    [*] --> Idle: Application waits for user
+
+    state "UI Layer (MainWindow / StrategyWindow)" as UI {
+        Idle --> ReadInput: Button click (e.g., Run Single Lap)
+        ReadInput --> CreateRequest: Create DTO (e.g., SingleLapRequest)
+        CreateRequest --> SendRequest: controller.handle_request(req)
     }
 
-    state "Controller Vrstva (Sestavení)" as Controller {
-        Odeslani --> SestaveniAuta: Inicializace Car() z req.car_params
-        SestaveniAuta --> Routovani: Jaký je to typ Requestu?
+    state "Controller Layer (Assembly)" as Controller {
+        SendRequest --> AssembleCar: Initialize Car() from req.car_params
+        AssembleCar --> Routing: What type of Request is it?
         
-        Routovani --> TvorbaSingleTasku: type(req) is SingleLapRequest
-        Routovani --> TvorbaLapMapTasku: type(req) is LapMapTestRequest
-        Routovani --> TvorbaStrategyTasku: type(req) is StrategyOptRequest
-        Routovani --> TvorbaDeploymentTasku: type(req) is DeploymentOptRequest
+        Routing --> CreateSingleTask: type(req) is SingleLapRequest
+        Routing --> CreateLapMapTask: type(req) is LapMapTestRequest
+        Routing --> CreateStrategyTask: type(req) is StrategyOptRequest
+        Routing --> CreateDeploymentTask: type(req) is DeploymentOptRequest
         
-        TvorbaSingleTasku --> SpusteniWorkeru
-        TvorbaLapMapTasku --> SpusteniWorkeru
-        TvorbaStrategyTasku --> SpusteniWorkeru
-        TvorbaDeploymentTasku --> SpusteniWorkeru
+        CreateSingleTask --> StartWorker
+        CreateLapMapTask --> StartWorker
+        CreateStrategyTask --> StartWorker
+        CreateDeploymentTask --> StartWorker
         
-        SpusteniWorkeru --> active_worker.start()
+        StartWorker --> active_worker.start()
     }
 
     state "Loading (MainWindow)" as Loading {
-        SestaveniAuta --> UkazLoading: emit simulationStarted()
+        AssembleCar --> ShowLoading: emit simulationStarted()
     }
 
-    state "Pracovní vlákno (SimulationWorker)" as Worker {
+    state "Worker Thread (SimulationWorker)" as Worker {
         active_worker.start() --> TaskExecute: task.execute(callback)
         TaskExecute --> TaskExecute: emit progress(current, total)
-        TaskExecute --> VytvorPayload: Výpočet dokončen
+        TaskExecute --> CreatePayload: Computation finished
     }
 
-    state "Zpracování Výsledků (SimulationApp)" as Results {
-        VytvorPayload --> Konec: emit finished(SolverPayload)
+    state "Results Processing (SimulationApp)" as Results {
+        CreatePayload --> Finish: emit finished(SolverPayload)
         
-        Konec --> TvorbaOkna: App zachytí signál a podívá se na payload.kind
-        TvorbaOkna --> ZobrazeniOkna: App uloží a zobrazí okno (Results, Sensitivity, atd.)
+        Finish --> CreateWindow: App catches signal and checks payload.kind
+        CreateWindow --> ShowWindow: App stores and shows window (Results, Sensitivity, etc.)
     }
 
-    ZobrazeniOkna --> Idle
-    Konec --> SkryjLoading: UI zachytí signál a skryje overlay
-    SkryjLoading --> Idle
+    ShowWindow --> Idle
+    Finish --> HideLoading: UI catches signal and hides overlay
+    HideLoading --> Idle
 ```
 --- KONEC SOUBORU: architecure.md ---
 
@@ -221,6 +225,7 @@ from src.ui.main_window import MainWindow
 from src.ui.results_window import ResultsWindow
 from src.ui.endurance_strategy import LaptimeAppMainWindow
 from src.ui.endurance_results import EnduranceResultsWindow
+from src.ui.style_manager import StyleManager
 from src.handlers.controller import SimulationController
 from src.optimization.work_thread import SimulationWorker
 from src.handlers.requests import StrategyOptRequest, DeploymentOptRequest
@@ -364,6 +369,9 @@ if __name__ == "__main__":
         pass # Not on windows
 
     app = QApplication(sys.argv)
+
+    global_style = StyleManager.get_global_stylesheet()
+    app.setStyleSheet(global_style)
 
     icon_path = os.path.join("data", "logo.png")
     app_icon = QIcon(icon_path)
@@ -563,22 +571,18 @@ class Car:
         return Ff, Fr
     
         
-    def get_friction_limit(self,v, mass = None, mu_x = None,mu_y = None, cl = None):
+    def get_friction_limit(self, v, weight=None, use_cl=None):
+        weight = weight if weight is not None else self.weight
+        use_cl = use_cl if use_cl is not None else self.cl
 
-        use_mass = mass if mass is not None else self.mass
-        use_mu_x = mu_x if mu_x is not None else self.mu_x
-        use_mu_y = mu_y if mu_y is not None else self.mu_y
-        use_cl = cl if cl is not None else self.cl
-        
         F_aero = 0.5 * self.rho * use_cl * v**2
 
-        Fz = use_mass*self.g + F_aero
-        #calcualte max force in x
-        max_x = use_mu_x*Fz
-        #calculate max force in y
-        max_y = use_mu_y*Fz
+        Fz = weight * self.g + F_aero
         
-        # (max_longitudinal, max_lateral)
+        # OPRAVA: Tady musí být násobení self.mu_x a self.mu_y, nikoliv weight!
+        max_x = self.mu_x * Fz
+        max_y = self.mu_y * Fz
+        
         return (max_x, max_y)
     
 
@@ -1635,48 +1639,82 @@ class TrackGenerator:
 --- ZAČÁTEK SOUBORU: src\core\vehicles\CTU25.json ---
 {
     "acp_capacity": 6.0,
-    "weight": 253.0,
+    "weight": 270.5,
     "cd": 1.83,
     "cd_drs": 1.17,
     "cl": 5.64,
     "cl_drs": 4.2,
     "cop": 0.53,
     "power_limit": 80.0,
-    "regen_eff": 0.9,
-    "laps": 22,
+    "regen_eff": 0.8,
+    "laps": 18,
     "ds": 1.0,
-    "model_type": "mass_point",
+    "model_type": "mass_point_rk4",
     "energy_limit": null,
-    "drs_allowed": true,
-    "soc_start": 1.0,
-    "mass": 280.0,
-    "mu_x": 1.25,
-    "mu_y": 1.25
+    "drs_allowed": false,
+    "soc_start": 0.8
 }
 --- KONEC SOUBORU: src\core\vehicles\CTU25.json ---
 
 --- ZAČÁTEK SOUBORU: src\core\vehicles\CTU26.json ---
 {
     "acp_capacity": 6.0,
-    "weight": 253.0,
+    "weight": 283.0,
     "cd": 1.83,
     "cd_drs": 1.17,
     "cl": 5.64,
     "cl_drs": 4.2,
     "cop": 0.53,
     "power_limit": 80.0,
-    "regen_eff": 0.9,
-    "laps": 17,
+    "regen_eff": 0.8,
+    "laps": 22,
     "ds": 1.0,
     "model_type": "mass_point_rk4",
     "energy_limit": null,
-    "drs_allowed": true,
-    "soc_start": 1.0,
-    "mass": 280.0,
-    "mu_x": 1.25,
-    "mu_y": 1.25
+    "drs_allowed": false,
+    "soc_start": 0.75
 }
 --- KONEC SOUBORU: src\core\vehicles\CTU26.json ---
+
+--- ZAČÁTEK SOUBORU: src\core\vehicles\CTU27.json ---
+{
+    "acp_capacity": 6.0,
+    "weight": 270.5,
+    "cd": 1.83,
+    "cd_drs": 1.17,
+    "cl": 5.64,
+    "cl_drs": 4.2,
+    "cop": 0.53,
+    "power_limit": 80.0,
+    "regen_eff": 0.8,
+    "laps": 18,
+    "ds": 1.0,
+    "model_type": "single_track",
+    "energy_limit": null,
+    "drs_allowed": false,
+    "soc_start": 0.8
+}
+--- KONEC SOUBORU: src\core\vehicles\CTU27.json ---
+
+--- ZAČÁTEK SOUBORU: src\core\vehicles\default_car.json ---
+{
+    "acp_capacity": 6.0,
+    "weight": 280.0,
+    "cd": 1.83,
+    "cd_drs": 1.17,
+    "cl": 5.64,
+    "cl_drs": 4.2,
+    "cop": 0.53,
+    "power_limit": 80.0,
+    "regen_eff": 0.8,
+    "laps": 22,
+    "ds": 0.5,
+    "model_type": "mass_point_rk4",
+    "energy_limit": null,
+    "drs_allowed": false,
+    "soc_start": 1.0
+}
+--- KONEC SOUBORU: src\core\vehicles\default_car.json ---
 
 --- ZAČÁTEK SOUBORU: src\handlers\controller.py ---
 from PyQt6.QtCore import QObject, pyqtSignal
@@ -1907,18 +1945,16 @@ class MassPointSolver:
         # =========================
         # Parameters
         # =========================
-        p_mass = opti.parameter()
+        p_weight = opti.parameter()
         p_cl   = opti.parameter()
         p_cd   = opti.parameter()
-        p_mu_x = opti.parameter()
-        p_mu_y = opti.parameter()
+ 
 
         # Set params values
-        opti.set_value(p_mass, self.car.mass)
+        opti.set_value(p_weight, self.car.weight)
         opti.set_value(p_cl,   self.car.cl)
         opti.set_value(p_cd,   self.car.cd)
-        opti.set_value(p_mu_x, self.car.mu_x)
-        opti.set_value(p_mu_y, self.car.mu_y)
+   
 
         # =========================
         # Track data
@@ -1974,14 +2010,12 @@ class MassPointSolver:
 
         F_max_x, F_max_y = Car.get_friction_limit(
             self.car, v_k,
-            mass=p_mass,
-            mu_x=p_mu_x,
-            mu_y=p_mu_y,
-            cl=cl_eff
+            weight=p_weight,
+            use_cl=cl_eff
         )
 
         # Lateral Force: F_lat = m * v^2 * curvature
-        F_lat = p_mass * v_k**2 * ca.fabs(kappa_grid[:-1])
+        F_lat = p_weight * v_k**2 * ca.fabs(kappa_grid[:-1])
 
         # Longitudinal force
         F_long_k = F_acc + F_brake
@@ -2008,7 +2042,7 @@ class MassPointSolver:
         # Dynamics
         # =========================
         F_net = F_long_k - F_drag
-        acc = F_net / p_mass
+        acc = F_net / p_weight
 
         # Speed integration: v^2 = v0^2 + 2*a*ds
         v_next_sq = v_k**2 + 2 * acc * ds
@@ -2089,7 +2123,7 @@ class MassPointSolver:
         # =========================
         J_Time = T[-1]
 
-        F_norm_factor = (self.car.mass * self.car.g)**2
+        F_norm_factor = (self.car.weight * self.car.g)**2
         J_overlap = 0.004 * ca.sum1((F_acc * -F_brake) / F_norm_factor)
 
         J_final_v = 0.1 * v[-1]
@@ -2120,14 +2154,12 @@ class MassPointSolver:
             # =========================
             L = opti.f + ca.dot(opti.lam_g, opti.g)
 
-            sens_m   = sol.value(ca.jacobian(L, p_mass))
+            sens_w   = sol.value(ca.jacobian(L, p_weight))
             sens_cl  = sol.value(ca.jacobian(L, p_cl))
             sens_cd  = sol.value(ca.jacobian(L, p_cd))
-            sens_mux = sol.value(ca.jacobian(L, p_mu_x))
-            sens_muy = sol.value(ca.jacobian(L, p_mu_y))
-
+         
             print("sensitivity results")
-            print(f"Mass: {sens_m:+.4f} s/kg")
+            print(f"Weight: {sens_w:+.4f} s/kg")
             print(f"CL:   {sens_cl:+.4f} s/unit")
             print(f"CdA:  {sens_cd:+.4f} s/unit")
 
@@ -2144,11 +2176,9 @@ class MassPointSolver:
                 recuperation=sol.value(P_recuperated*self.car.regen_eff),
                 drs_usage=sol.value(drs_ef),
                 sens={
-                    "dTime_dm": sens_m,
+                    "dTime_dm": sens_w,
                     "dTime_dCL": sens_cl,
                     "dTime_dCdA": sens_cd,
-                    "dTime_dMuX": sens_mux,
-                    "dTime_dMuY": sens_muy
                 }
             )
 
@@ -2163,18 +2193,16 @@ class MassPointSolver:
         # =========================
         # Parameters
         # =========================
-        p_mass = opti.parameter()
+        p_weight = opti.parameter()
         p_cl   = opti.parameter()
         p_cd   = opti.parameter()
-        p_mu_x = opti.parameter()
-        p_mu_y = opti.parameter()
+     
 
         # Set params values
-        opti.set_value(p_mass, self.car.mass)
+        opti.set_value(p_weight, self.car.weight)
         opti.set_value(p_cl,   self.car.cl)
         opti.set_value(p_cd,   self.car.cd)
-        opti.set_value(p_mu_x, self.car.mu_x)
-        opti.set_value(p_mu_y, self.car.mu_y)
+
 
         # =========================
         # Track data
@@ -2230,14 +2258,12 @@ class MassPointSolver:
 
         F_max_x, F_max_y = Car.get_friction_limit(
             self.car, v_k,
-            mass=p_mass,
-            mu_x=p_mu_x,
-            mu_y=p_mu_y,
-            cl=cl_eff
+            weight=p_weight,    
+            use_cl=cl_eff
         )
 
         # Lateral Force: F_lat = m * v^2 * curvature
-        F_lat = p_mass * v_k**2 * ca.fabs(kappa_grid[:-1])
+        F_lat = p_weight * v_k**2 * ca.fabs(kappa_grid[:-1])
 
         # Longitudinal force
         F_long_k = F_acc + F_brake
@@ -2277,7 +2303,7 @@ class MassPointSolver:
             # Odpor se průběžně mění s rychlostí uvnitř RK4 sub-kroků
             f_drag_step = Car.get_aero_drag(self.car, v_val, cd=cd_eff)
             f_net_step = F_long_k - f_drag_step
-            acc_step = f_net_step / p_mass
+            acc_step = f_net_step / p_weight
             
             dv_ds = acc_step / v_val
             dT_ds = 1.0 / v_val
@@ -2350,7 +2376,7 @@ class MassPointSolver:
         # =========================
         J_Time = T[-1]
 
-        F_norm_factor = (self.car.mass * self.car.g)**2
+        F_norm_factor = (self.car.weight * self.car.g)**2
         J_overlap = 0.004 * ca.sum1((F_acc * -F_brake) / F_norm_factor)
 
         J_final_v = 0.1 * v[-1]
@@ -2381,14 +2407,13 @@ class MassPointSolver:
             # =========================
             L = opti.f + ca.dot(opti.lam_g, opti.g)
 
-            sens_m   = sol.value(ca.jacobian(L, p_mass))
+            sens_w   = sol.value(ca.jacobian(L, p_weight))
             sens_cl  = sol.value(ca.jacobian(L, p_cl))
             sens_cd  = sol.value(ca.jacobian(L, p_cd))
-            sens_mux = sol.value(ca.jacobian(L, p_mu_x))
-            sens_muy = sol.value(ca.jacobian(L, p_mu_y))
+         
 
             print("sensitivity results")
-            print(f"Mass: {sens_m:+.4f} s/kg")
+            print(f"Weight: {sens_w:+.4f} s/kg")
             print(f"CL:   {sens_cl:+.4f} s/unit")
             print(f"CdA:  {sens_cd:+.4f} s/unit")
 
@@ -2405,11 +2430,9 @@ class MassPointSolver:
                 recuperation=sol.value(P_recuperated*self.car.regen_eff),
                 drs_usage=sol.value(drs_ef),
                 sens={
-                    "dTime_dm": sens_m,
+                    "dTime_dm": sens_w,
                     "dTime_dCL": sens_cl,
                     "dTime_dCdA": sens_cd,
-                    "dTime_dMuX": sens_mux,
-                    "dTime_dMuY": sens_muy
                 }
             )
 
@@ -3701,11 +3724,13 @@ class SingleLapTask(SimulationTask):
 
     def execute(self, progress_callback) -> SolverPayload:
         start = time.time()
+
+        E = self.car.acp_capacity * (1 - self.car.soc_start)
         
         if self.track.speed is not None:
-            init_cond = InitConditions(v=self.track.speed[0], T=0.0, E=2.0)
+            init_cond = InitConditions(v=self.track.speed[0], T=0.0, E=E)
         else:
-            init_cond = InitConditions(v=5, T=0.0, E=0.0)
+            init_cond = InitConditions(v=5, T=0.0, E=E)
 
        # init_guess = calculate_initial_guess_single(self.car, self.track, init_cond, ds=self.ds)
         
@@ -3715,7 +3740,7 @@ class SingleLapTask(SimulationTask):
             res = self.solver.solveLap_rk4(init_cond, ds=self.ds, init_guess=None)
         
         end = time.time()
-        print(f"Time elapsed: {end - start:.6f} s")
+        print(f"Time elapsed: {end - start:.2f} s")
         
         if not res.success:
             raise Exception("Optimization failed for single lap.")
@@ -3822,47 +3847,113 @@ from .strategy import StrategyOptTask, DeploymentOptTask
 --- ZAČÁTEK SOUBORU: src\ui\compare_results.py ---
 import numpy as np
 import pyqtgraph as pg
-from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QLabel, QTabWidget)
+from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QLabel, QTabWidget, QComboBox, QHBoxLayout)
 from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QFont
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
 from matplotlib.colors import TwoSlopeNorm
-from PyQt6.QtWidgets import QComboBox, QHBoxLayout
 import seaborn as sns
 
 
 class MplCanvas(FigureCanvasQTAgg):
     def __init__(self, parent=None, width=5, height=4, dpi=100):
-        
         self.fig = Figure(figsize=(width, height), dpi=dpi)
+        self.fig.patch.set_facecolor('#ffffff') # Čistě bílé pozadí
         self.axes = self.fig.add_subplot(111)
         
         super(MplCanvas, self).__init__(self.fig)
         self.setParent(parent)
-        
-       
+        self.fig.tight_layout() # Využije maximum místa
         FigureCanvasQTAgg.updateGeometry(self)
 
 
 class ComparisonPlotWindow(QWidget):
+    # Moderní barevná paleta (Tailwind CSS colors) pro grafy
+    PALETTE = ['#3b82f6', '#ef4444', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899']
+
     def __init__(self, selected_data):
         super().__init__()
+        
+        # Globální vyhlazování pro hezčí grafy
+        pg.setConfigOptions(antialias=True)
+        
         self.selected_data = selected_data
         self.runs = []
         
-        self.setWindowTitle("Log comparison")
-        self.resize(1000, 800)
+        self.setWindowTitle("Telemetry Comparison")
+        self.resize(1100, 850)
         
-        # 1. Načtení dat
+        # --- APLIKACE MODERNÍHO VZHLEDU (QSS) ---
+        self.setStyleSheet("""
+            QWidget {
+                font-family: 'Segoe UI', system-ui, sans-serif;
+                font-size: 10pt;
+                color: #334155;
+                background-color: #f8f9fa;
+            }
+            QTabWidget::pane {
+                border: 1px solid #e2e8f0;
+                border-radius: 8px;
+                background: #ffffff;
+            }
+            QTabBar::tab {
+                background: #e2e8f0;
+                color: #64748b;
+                padding: 10px 20px;
+                border-top-left-radius: 6px;
+                border-top-right-radius: 6px;
+                margin-right: 4px;
+                font-weight: bold;
+            }
+            QTabBar::tab:selected {
+                background: #ffffff;
+                color: #0f172a;
+                border-bottom: 2px solid #3b82f6; /* Zvýraznění aktivního tabu */
+            }
+            QTabBar::tab:hover:!selected {
+                background: #cbd5e1;
+            }
+            QComboBox {
+                background: #ffffff;
+                border: 1px solid #cbd5e1;
+                border-radius: 6px;
+                padding: 6px 15px;
+                min-width: 180px;
+                font-weight: bold;
+                color: #0f172a;
+            }
+            QComboBox:hover {
+                border: 1px solid #94a3b8;
+            }
+            QComboBox::drop-down {
+                border: none;
+            }
+        """)
+
+        # 1. ZALOŽENÍ LAYOUTU
+        self.main_layout = QVBoxLayout(self)
+        self.main_layout.setContentsMargins(15, 15, 15, 15)
+        self.main_layout.setSpacing(10)
+        
+        # 2. Načtení dat
         self.load_data()
         
-        # 2. Layout
-        self.layout = QVBoxLayout(self)
-        
-        # Tabs
+        # 3. Kontrola dat
+        if not self.runs:
+            error_lbl = QLabel(
+                "Could not load the selected logs.\n"
+                "Please generate new simulations and try again."
+            )
+            error_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            error_lbl.setStyleSheet("font-size: 14px; font-weight: bold; color: #ef4444; background: transparent;")
+            self.main_layout.addWidget(error_lbl)
+            return
+
+        # 4. Záložky
         self.tabs = QTabWidget()
-        self.layout.addWidget(self.tabs)
+        self.main_layout.addWidget(self.tabs)
         
         self.init_dynamics_tab()
         self.init_energy_tab()
@@ -3896,42 +3987,75 @@ class ComparisonPlotWindow(QWidget):
         self.runs.sort(key=lambda x: x['time'])
         self.ref_run = self.runs[0]
 
+    def _style_plot(self, plot, title, y_label, units):
+        """Pomocná metoda pro krásný čistý vzhled pyqtgraph plotů"""
+        plot.setBackground('#ffffff')
+        plot.setTitle(title, color='#0f172a', size='12pt', bold=True)
+        plot.setLabel('left', y_label, units=units, color='#64748b')
+        plot.setLabel('bottom', 'Distance', units='m', color='#64748b')
+        
+        # Obarvení os a textu na jemnou šedou
+        ax_pen = pg.mkPen(color='#94a3b8', width=1)
+        plot.getAxis('left').setPen(ax_pen)
+        plot.getAxis('left').setTextPen('#475569')
+        plot.getAxis('bottom').setPen(ax_pen)
+        plot.getAxis('bottom').setTextPen('#475569')
+        
+        # Jemná mřížka
+        plot.showGrid(x=True, y=True, alpha=0.15)
+        return plot
+
     def init_dynamics_tab(self):
         widget = QWidget()
         layout = QVBoxLayout()
+        layout.setContentsMargins(15, 15, 15, 15)
+        layout.setSpacing(15)
         
-        # Grafy
-        plot_v = pg.PlotWidget(title="Speed (km/h)")
-        plot_v.showGrid(x=True, y=True, alpha=0.1)
-        plot_v.setLabel('left', 'Speed', units='km/h')
-        plot_v.setLabel('bottom', 'Distance', units='m')
+        # --- 1. Graf Rychlosti ---
+        plot_v = pg.PlotWidget()
+        self._style_plot(plot_v, "Speed Telemetry", "Speed", "km/h")
         
-        plot_dt = pg.PlotWidget(title="Delta Time (s)")
-        plot_dt.showGrid(x=True, y=True, alpha=0.1)
-        plot_dt.setXLink(plot_v) # Jediné propojení X osy
-        plot_dt.setLabel('left', 'Delta Time', units='s')
-        plot_dt.setLabel('bottom', 'Distance', units='m')
+        # Moderní umístění legendy
+        legend = plot_v.addLegend(offset=(20, 20), pen=pg.mkPen('#e2e8f0'), brush=pg.mkBrush('#ffffffEE'))
+        legend.setLabelTextColor('#0f172a')
         
+        # --- 2. Graf Delta Time ---
+        plot_dt = pg.PlotWidget()
+        self._style_plot(plot_dt, "Delta Time (Accumulated Gap)", "Time", "s")
+        plot_dt.setXLink(plot_v)
+        
+        # Zero Line (Černá tenká linka)
+        plot_dt.addItem(pg.InfiniteLine(pos=0, angle=0, pen=pg.mkPen('#334155', width=1.5)))
 
         # Vykreslení
         for i, run in enumerate(self.runs):
-            # Barva: Reference zelená, ostatní červená/modrá/žlutá
-            color = 'b' if run is self.ref_run else (i, len(self.runs)) 
-            width = 3 if run is self.ref_run else 2
+            # 0. index je vždy ref_run -> použijeme modrou
+            color_hex = self.PALETTE[i % len(self.PALETTE)]
+            color_val = pg.mkColor(color_hex)
+            width = 2.5 if run is self.ref_run else 2.0
             
-            # Speed
-            plot_v.plot(run['s'], run['v'] * 3.6, pen=pg.mkPen(color, width=width))
+            # A) Speed
+            plot_v.plot(run['s'], run['v'] * 3.6, pen=pg.mkPen(color_val, width=width), name=f"{run['name']} ({run['time']:.3f}s)")
             
-            # Delta Time
-            # Musíme ošetřit délky polí, aby šlo odečítat
+            # B) Delta Time
             min_len = min(len(run['t']), len(self.ref_run['t']))
-            
             t_run = run['t'][:min_len]
             t_ref = self.ref_run['t'][:min_len]
             s_axis = run['s'][:min_len]
             
             delta = t_run - t_ref
-            plot_dt.plot(s_axis, delta, pen=pg.mkPen(color, width=width))
+            dt_curve = plot_dt.plot(s_axis, delta, pen=pg.mkPen(color_val, width=width), name=run['name'])
+            
+            # VÝPLŇ DELTY (s jemnou průhledností)
+            if run is not self.ref_run:
+                dummy_zero = pg.PlotCurveItem(s_axis, np.zeros_like(s_axis), pen=None)
+                plot_dt.addItem(dummy_zero)
+                
+                fill_color = pg.mkColor(color_hex)
+                fill_color.setAlpha(40) # Jemná 15% průhlednost (0-255)
+                
+                fill = pg.FillBetweenItem(dt_curve, dummy_zero, brush=fill_color)
+                plot_dt.addItem(fill)
 
         layout.addWidget(plot_v)
         layout.addWidget(plot_dt)
@@ -3941,21 +4065,22 @@ class ComparisonPlotWindow(QWidget):
     def init_energy_tab(self):
         widget = QWidget()
         layout = QVBoxLayout()
+        layout.setContentsMargins(15, 15, 15, 15)
+        layout.setSpacing(15)
         
-        plot_p = pg.PlotWidget(title="Power (kW)")
-        plot_p.showGrid(x=True, y=True)
-        plot_p.setLabel('left', 'Power', units='kW')
-        plot_p.setLabel('bottom', 'Distance', units='m')
+        plot_p = pg.PlotWidget()
+        self._style_plot(plot_p, "Powertrain Power", "Power", "kW")
+        legend = plot_p.addLegend(offset=(20, 20), pen=pg.mkPen('#e2e8f0'), brush=pg.mkBrush('#ffffffEE'))
+        legend.setLabelTextColor('#0f172a')
         
-        plot_e = pg.PlotWidget(title="Energy (kWh)")
-        plot_e.showGrid(x=True, y=True)
+        plot_e = pg.PlotWidget()
+        self._style_plot(plot_e, "Energy Consumption", "Energy", "kWh")
         plot_e.setXLink(plot_p)
-        plot_e.setLabel('left', 'Energy', units='kWh')
-        plot_e.setLabel('bottom', 'Distance', units='m')
 
         for i, run in enumerate(self.runs):
-            color = 'b' if run is self.ref_run else (i, len(self.runs))
-            width = 3 if run is self.ref_run else 2
+            color_hex = self.PALETTE[i % len(self.PALETTE)]
+            color_val = pg.mkColor(color_hex)
+            width = 2.5 if run is self.ref_run else 2.0
             
             # Power Calc
             min_len = min(len(run['f_acc']), len(run['v']))
@@ -3964,8 +4089,16 @@ class ComparisonPlotWindow(QWidget):
             pwr = (f_tot * v) / 1000.0
             s_axis = run['s'][:min_len]
             
-            plot_p.plot(s_axis, pwr, pen=pg.mkPen(color, width=width))
-            plot_e.plot(run['s'], run['E'], pen=pg.mkPen(color, width=width))
+            plot_p.plot(s_axis, pwr, pen=pg.mkPen(color_val, width=width), name=run['name'])
+            
+            # Energy - výplň pod křivkou pro lepší čitelnost
+            e_curve = plot_e.plot(run['s'], run['E'], pen=pg.mkPen(color_val, width=width), name=run['name'])
+            
+            if run is self.ref_run:
+                dummy_zero = pg.PlotCurveItem(run['s'], np.zeros_like(run['s']), pen=None)
+                fill_color = pg.mkColor(color_hex)
+                fill_color.setAlpha(20)
+                plot_e.addItem(pg.FillBetweenItem(e_curve, dummy_zero, brush=fill_color))
 
         layout.addWidget(plot_p)
         layout.addWidget(plot_e)
@@ -3973,19 +4106,23 @@ class ComparisonPlotWindow(QWidget):
         self.tabs.addTab(widget, "Energy")
 
     def init_map_tab(self):
-        """
-        Vytvoří záložku s Matplotlib mapou pro porovnání Delta V
-        """
         widget = QWidget()
         layout = QVBoxLayout()
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(15)
         
         # --- Controls (Výběr kola pro porovnání) ---
         controls_layout = QHBoxLayout()
-        controls_layout.addWidget(QLabel(f"Reference Lap: {self.ref_run['name']}"))
-        controls_layout.addWidget(QLabel("  vs  "))
+        
+        lbl_ref = QLabel(f"Reference Lap: <b>{self.ref_run['name']}</b>")
+        lbl_ref.setStyleSheet("font-size: 12pt; color: #0f172a; background: transparent;")
+        controls_layout.addWidget(lbl_ref)
+        
+        lbl_vs = QLabel("  vs  ")
+        lbl_vs.setStyleSheet("font-size: 11pt; color: #64748b; background: transparent;")
+        controls_layout.addWidget(lbl_vs)
         
         self.combo_compare = QComboBox()
-        # Přidáme do výběru všechna kola kromě referenčního
         self.compare_candidates = [r for r in self.runs if r is not self.ref_run]
         
         if not self.compare_candidates:
@@ -3995,7 +4132,9 @@ class ComparisonPlotWindow(QWidget):
             return
 
         for run in self.compare_candidates:
-            self.combo_compare.addItem(f"{run['name']} (+{run['time'] - self.ref_run['time']:.2f}s)")
+            diff = run['time'] - self.ref_run['time']
+            sign = "+" if diff > 0 else ""
+            self.combo_compare.addItem(f"{run['name']} ({sign}{diff:.3f}s)")
             
         self.combo_compare.currentIndexChanged.connect(self.update_heatmap)
         controls_layout.addWidget(self.combo_compare)
@@ -4004,8 +4143,16 @@ class ComparisonPlotWindow(QWidget):
         layout.addLayout(controls_layout)
 
         # --- Matplotlib Canvas ---
+        # Zabalíme do QWidgetu s bílým pozadím a okrajem
+        canvas_container = QWidget()
+        canvas_container.setStyleSheet("background: #ffffff; border: 1px solid #e2e8f0; border-radius: 8px;")
+        canvas_layout = QVBoxLayout(canvas_container)
+        canvas_layout.setContentsMargins(5, 5, 5, 5)
+        
         self.map_canvas = MplCanvas(self, width=5, height=4, dpi=100)
-        layout.addWidget(self.map_canvas)
+        canvas_layout.addWidget(self.map_canvas)
+        
+        layout.addWidget(canvas_container)
         
         widget.setLayout(layout)
         self.tabs.addTab(widget, "Delta V Map")
@@ -4014,56 +4161,42 @@ class ComparisonPlotWindow(QWidget):
         self.update_heatmap()
 
     def update_heatmap(self):
-        """
-        Vypočítá rozdíl rychlostí a vykreslí mapu.
-        """
         if not self.compare_candidates: return
 
         idx = self.combo_compare.currentIndex()
         comp_run = self.compare_candidates[idx]
         ref_run = self.ref_run
 
-        # 1. Interpolace dat (aby seděla na stejné 's')
-        # Použijeme 's' z referenčního kola jako osu
         s_ref = ref_run['s']
-        v_ref = ref_run['v'] * 3.6 # km/h
-        
-        # Interpolujeme rychlost porovnávaného kola na pozice reference
+        v_ref = ref_run['v'] * 3.6 
         v_comp_interp = np.interp(s_ref, comp_run['s'], comp_run['v']) * 3.6
         
-        # 2. Delta V (Kladná = comp je rychlejší, Záporná = comp je pomalejší)
         delta_v = v_comp_interp - v_ref
 
-        # 3. Vykreslení
         self.map_canvas.axes.clear()
         ax = self.map_canvas.axes
         
-        # Vykreslíme trať pomocí Scatter plotu, kde barva = delta_v
-        # Používáme colormap 'seismic' (modrá-bílá-červená) nebo 'coolwarm'
-        # Normování: 0 musí být bílá/střed. 
-        
-        # Zjištění limitů pro symetrickou barevnou škálu
         max_diff = max(abs(np.min(delta_v)), abs(np.max(delta_v)))
-        if max_diff == 0: max_diff = 1 # Ochrana proti dělení nulou
+        if max_diff == 0: max_diff = 1 
         
         norm = TwoSlopeNorm(vmin=-max_diff, vcenter=0, vmax=max_diff) 
-        #cmap = sns.color_palette("pla", as_cmap=True)
         
-        sc = ax.scatter(ref_run['x'], ref_run['y'], c=delta_v, cmap='plasma', s=10, norm=norm)
+        sc = ax.scatter(ref_run['x'], ref_run['y'], c=delta_v, cmap='coolwarm', s=12, norm=norm)
         
-        ax.set_title(f"Speed delta")
+        ax.set_title(f"Speed Delta [km/h]", pad=15, fontweight='bold', color='#0f172a')
         ax.set_aspect('equal')
-        ax.set_xlabel("X [m]")
-        ax.set_ylabel("Y [m]")
-        ax.grid(True, alpha=0.3)
         
-        # Colorbar (pokud už existuje, musíme ho odstranit, jinak se budou množit)
+        # OPRAVA ZDE: Vypnutí os, mřížky a okrajů rámečku pro čistý vzhled
+        ax.axis('off')
+        
         if hasattr(self, 'cbar'):
             self.cbar.remove()
         
-        self.cbar = self.map_canvas.fig.colorbar(sc, ax=ax, label='Delta Speed [km/h]')
+        # Vytvoření moderního colorbaru
+        self.cbar = self.map_canvas.fig.colorbar(sc, ax=ax, fraction=0.03, pad=0.04)
+        self.cbar.outline.set_visible(False)
+        self.cbar.ax.tick_params(colors='#475569')
         
-        # Červená = Pomalejší než ref, Modrá = Rychlejší než ref
         self.map_canvas.draw()
 --- KONEC SOUBORU: src\ui\compare_results.py ---
 
@@ -4493,45 +4626,41 @@ import numpy as np
 import casadi as ca
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, 
                              QSlider, QLabel, QMessageBox, QPushButton, 
-                             QDoubleSpinBox, QTabWidget, QGroupBox, QApplication,QSizePolicy)
-from PyQt6.QtCore import Qt
-from PyQt6.QtCore import pyqtSignal
+                             QDoubleSpinBox, QTabWidget, QGroupBox, QApplication, QSizePolicy)
+from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtGui import QGuiApplication
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg, NavigationToolbar2QT
 from matplotlib.figure import Figure
 from src.ui.loader import LoadingOverlay
 from scipy.ndimage import median_filter
 
 class MapTab(QWidget):
- 
     def __init__(self, map_data, fixed_axis='soc', parent=None):
         super().__init__(parent)
-        #self.setStyleSheet("background-color: white; color: black;")
         self.map_data = map_data
         self.fixed_axis = fixed_axis
-        
         
         self.laptime_map = map_data['interpolant']
         self.z_min = map_data['z_min']
         self.z_max = map_data['z_max']
         
-        # --- UI Layout ---
         main_layout = QVBoxLayout(self) 
         
-        # Matplotlib Canvas F
+        # Matplotlib Canvas 
         self.fig = Figure(figsize=(8, 6), dpi=100)
+        self.fig.patch.set_facecolor('#ffffff') # Bílé pozadí pro moderní look
         self.canvas = FigureCanvasQTAgg(self.fig)
                 
-        # Horizontal layout
         content_layout = QHBoxLayout()
         self.canvas.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         content_layout.addWidget(self.canvas, stretch=1)
         
-        # --- Slider 
+        # --- Slider ---
         slider_layout = QVBoxLayout() 
         self.lbl_slider = QLabel("")
         self.lbl_slider.setAlignment(Qt.AlignmentFlag.AlignCenter) 
+        self.lbl_slider.setStyleSheet("font-weight: bold; color: #3b82f6; font-size: 14px;")
         
-        # Vertical slider
         self.slider = QSlider(Qt.Orientation.Vertical)
         self.slider.setTickPosition(QSlider.TickPosition.TicksRight) 
         
@@ -4551,9 +4680,7 @@ class MapTab(QWidget):
         slider_layout.addWidget(self.lbl_slider)
         slider_layout.addWidget(self.slider)
         
-        
         content_layout.addLayout(slider_layout)
-      
         main_layout.addLayout(content_layout)
         
         # Camera default view
@@ -4566,15 +4693,14 @@ class MapTab(QWidget):
 
     def on_slider_changed(self, val):
         if self.fixed_axis == 'soc':
-            self.lbl_slider.setText(f"SoC: {val} %")
+            self.lbl_slider.setText(f"SoC:\n{val} %")
         else:
-            self.lbl_slider.setText(f"Regen: {val/100.0:.2f}")
+            self.lbl_slider.setText(f"Regen:\n{val/100.0:.2f}")
         self.update_plot()
 
     def update_plot(self):
         if self.fixed_axis == 'soc':
             soc_val = self.slider.value() / 100.0
-            # [SoC, Energy, Regen]
             pts_casadi = np.vstack((
                 np.full_like(self.X_mesh.ravel(), soc_val),
                 self.X_mesh.ravel(),
@@ -4584,7 +4710,6 @@ class MapTab(QWidget):
             title = f'Laptime map (SoC = {soc_val*100:.0f} %)'
         else:
             regen_val = self.slider.value() / 100.0
-            # [SoC, Energy, Regen]
             pts_casadi = np.vstack((
                 self.Y_mesh.ravel(),
                 self.X_mesh.ravel(),
@@ -4609,21 +4734,24 @@ class MapTab(QWidget):
         )
         
         self.ax3d.set_zlim(self.z_min, self.z_max)
-        self.ax3d.set_xlabel(x_label)
-        self.ax3d.set_ylabel(y_label)
-        self.ax3d.set_zlabel('Lap time [s]')
-        self.ax3d.set_title(title)
+        self.ax3d.set_xlabel(x_label, color='#475569')
+        self.ax3d.set_ylabel(y_label, color='#475569')
+        self.ax3d.set_zlabel('Lap time [s]', color='#475569')
+        self.ax3d.set_title(title, color='#0f172a', fontweight='bold')
         
-        #self.fig.colorbar(surf, ax=self.ax3d, shrink=0.5, aspect=10, label='Lap time [s]')
+        # Stylování os
+        self.ax3d.xaxis.set_tick_params(colors='#64748b')
+        self.ax3d.yaxis.set_tick_params(colors='#64748b')
+        self.ax3d.zaxis.set_tick_params(colors='#64748b')
+        
         self.ax3d.view_init(elev=self.view_elev, azim=self.view_azim)
-        
         self.fig.subplots_adjust(left=0.05, right=0.85, bottom=0.05, top=0.95)
         self.canvas.draw_idle()
 
 
 class LaptimeAppMainWindow(QWidget):
-    optimization_requested = pyqtSignal(float, float,float,float, object)
-    deployment_requested = pyqtSignal(float, float, float,float, object)
+    optimization_requested = pyqtSignal(float, float, float, float, object)
+    deployment_requested = pyqtSignal(float, float, float, float, object)
 
     def __init__(self, filepath, parent=None):
         super().__init__(parent)
@@ -4631,35 +4759,61 @@ class LaptimeAppMainWindow(QWidget):
     
         self.loading_overlay = LoadingOverlay(self)
         self.map_data = self.load_data(filepath)
-        main_layout = QVBoxLayout(self)
+        
+        # --- DYNAMICKÁ VELIKOST OKNA ---
+        screen = QGuiApplication.primaryScreen()
+        available_geometry = screen.availableGeometry()
 
-        self.showMaximized()
+        screen_width = available_geometry.width()
+        screen_height = available_geometry.height()
+
+        target_width = int(screen_width * 0.85)
+        target_height = int(screen_height * 0.90)
+
+        # Naše nové limity pro 2K monitory
+        target_width = min(target_width, 1600)
+        target_height = min(target_height, 1200)
+
+        self.resize(target_width, target_height)
+
+        if target_width >= screen_width * 0.95 or target_height >= screen_height * 0.95:
+            self.showMaximized()
         
-        control_group = QGroupBox("Optimization settings")
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(15, 15, 15, 15)
+        main_layout.setSpacing(15)
+        
+        # --- Ovládací Panel ---
+        control_group = QGroupBox("Optimization Settings")
+        control_group.setObjectName("HighlightedGroup") # Aplikace šedého podkladu
         control_layout = QHBoxLayout()
+        control_layout.setContentsMargins(15, 10, 15, 15)
         
-        # Button
-        self.btn_optimize = QPushButton("Calculate opt energy map")
-        self.btn_optimize.setStyleSheet("font-weight: bold; background-color: #0d16d1; color: white; padding: 5px;")
+        # Napojení tlačítek na globální barvy přes ID
+        self.btn_optimize = QPushButton("Calculate optimal energy map")
+        self.btn_optimize.setObjectName("BtnCompare") # Modrá z globálního CSS
+        self.btn_optimize.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_optimize.clicked.connect(self.run_optimization)
 
-        self.btn_deploy = QPushButton("Calculate opt deployment for given input")
-        self.btn_deploy.setStyleSheet("font-weight: bold; background-color: #2ca02c; color: white; padding: 5px;")
+        self.btn_deploy = QPushButton("Calculate deployment for given inputs")
+        self.btn_deploy.setObjectName("BtnRunSingle") # Zelená z globálního CSS
+        self.btn_deploy.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_deploy.clicked.connect(self.run_deployment)
         
         # Inputs
         lbl_regen = QLabel("Recuperation [%]:")
+        lbl_regen.setStyleSheet("font-weight: bold;")
         self.spin_regen = QDoubleSpinBox()
         self.spin_regen.setRange(0.0, 100)
         self.spin_regen.setSingleStep(1)
         self.spin_regen.setValue(80) 
         
         lbl_delta = QLabel("Time delta [%]:")
+        lbl_delta.setStyleSheet("font-weight: bold;")
         self.spin_delta = QDoubleSpinBox()
         self.spin_delta.setRange(0, 10.0)
         self.spin_delta.setSingleStep(0.5)
         self.spin_delta.setValue(0.0)
-
         
         control_layout.addWidget(self.btn_optimize)
         control_layout.addWidget(self.btn_deploy)
@@ -4673,25 +4827,22 @@ class LaptimeAppMainWindow(QWidget):
         control_group.setLayout(control_layout)
         main_layout.addWidget(control_group)
         
-     
+        # --- Záložky ---
         self.tabs = QTabWidget()
         
         if self.map_data:
-            #creting tabs
             self.tab_soc = MapTab(self.map_data, fixed_axis='soc')
             self.tab_regen = MapTab(self.map_data, fixed_axis='regen')
             
             side_by_side_widget = QWidget()
-            side_by_side_widget.setStyleSheet("background-color: white; color: black;")
             side_by_side_layout = QHBoxLayout(side_by_side_widget)
+            side_by_side_layout.setContentsMargins(10, 10, 10, 10)
             side_by_side_layout.addWidget(self.tab_soc)
             side_by_side_layout.addWidget(self.tab_regen)
             
-            
-            self.tabs.addTab(side_by_side_widget, "Laptime maps")
-
+            self.tabs.addTab(side_by_side_widget, "Laptime maps (Data)")
         else:
-            self.tabs.addTab(QLabel("Data se nepodařilo načíst."), "Error")
+            self.tabs.addTab(QLabel("Failed to load map data."), "Error")
             
         main_layout.addWidget(self.tabs)
 
@@ -4706,241 +4857,206 @@ class LaptimeAppMainWindow(QWidget):
             shape_3d = (len(soc_targets), len(e_targets), len(regen_targets))
             lap_times_3d = flat_lap_times.reshape(shape_3d)
             
-            # --- ZDE ZAČÍNÁ FILTRACE OUTLIERŮ ---
-            
-            # Vytvoříme vyhlazenou mapu pomocí okna 3x3x3
-            # Parametr 'size=3' znamená, že se průměruje buňka a její bezprostřední sousedé
+            # Outlier filter
             smoothed_3d = median_filter(lap_times_3d, size=3)
-            
-            # Vypočítáme absolutní rozdíl mezi původními daty a mediánem okolí
             diff = np.abs(lap_times_3d - smoothed_3d)
-            
-            # Nastavíme práh (threshold). 
-            # Pokud se bod liší od svého okolí o více než 5 sekund, považujeme ho za selhání solveru.
-            outlier_threshold = 5.0 
-            
-            outliers_mask = diff > outlier_threshold
+            outliers_mask = diff > 5.0
             num_outliers = np.sum(outliers_mask)
             
             if num_outliers > 0:
-                print(f"[Zpracování dat] Nalezeno a opraveno {num_outliers} outlierů pomocí mediánového filtru.")
-                # Přepíšeme nesmyslné hodnoty hodnotami z vyhlazené matice
+                print(f"[Data Load] Repaired {num_outliers} outliers via median filter.")
                 lap_times_3d[outliers_mask] = smoothed_3d[outliers_mask]
-            # --- KONEC FILTRACE ---
             
-            # Pokračujeme v původním kódu - připravíme pole pro CasADi
             flat_for_casadi = lap_times_3d.ravel(order='F')
-            
             grid_axes = [soc_targets.tolist(), e_targets.tolist(), regen_targets.tolist()]
             interpolant = ca.interpolant('laptime_map', 'bspline', grid_axes, flat_for_casadi.tolist())
 
             self.min_e_target = min(e_targets)
             self.max_e_target = max(e_targets)
             
-            e_fine = np.linspace(min(e_targets), max(e_targets), 50) 
-            r_fine = np.linspace(min(regen_targets), 1.0, 50)
-            soc_fine = np.linspace(min(soc_targets), 1.0, 50)
-            
             return {
                 'interpolant': interpolant,
-                'e_fine': e_fine,
-                'r_fine': r_fine,
-                'soc_fine': soc_fine,
+                'e_fine': np.linspace(min(e_targets), max(e_targets), 50),
+                'r_fine': np.linspace(min(regen_targets), 1.0, 50),
+                'soc_fine': np.linspace(min(soc_targets), 1.0, 50),
                 'r_min': min(regen_targets),
                 'r_max': max(regen_targets),
-                'z_min': np.nanmin(lap_times_3d), # Použijeme už vyfiltrovanou matici pro min/max
-                'z_max': np.nanmax(lap_times_3d)  # Jinak by se ti zde uložilo těch chybných 120+ s
+                'z_min': np.nanmin(lap_times_3d),
+                'z_max': np.nanmax(lap_times_3d) 
             }
         except Exception as e:
-            QMessageBox.critical(self, "Chyba načítání", f"Nepodařilo se načíst mapu z {filepath}:\n{e}")
+            QMessageBox.critical(self, "Load Error", f"Could not load map from {filepath}:\n{e}")
             return None
-        
- 
+
     def resizeEvent(self, event):
         self.loading_overlay.resize(self.size())
         super().resizeEvent(event)
 
-
     def add_result_tab(self, payload):
-        """
-        Zpracovává payloady z workeru. Rozlišuje, zda jde o celou 3D mapu, nebo jen deployment.
-        """
-        # --- Zpracování 3D Mapy (Tlačítko 1) ---
         if payload.kind == "endurance_map": 
             has_opt_energy_tab = False
             for i in range(self.tabs.count()):
                 if self.tabs.tabText(i) == "Optimal energy map":
                     has_opt_energy_tab = True
-                    self.tabs.setCurrentIndex(i) # Pokud existuje, jen se na ni přepneme
+                    self.tabs.setCurrentIndex(i) 
                     
             if not has_opt_energy_tab:
                 opt_energy_tab = OptimalEnergyMapTab(payload, self)
                 self.tabs.addTab(opt_energy_tab, "Optimal energy map")
                 self.tabs.setCurrentWidget(opt_energy_tab)
 
-        # --- Zpracování konkrétního deploymentu (Tlačítko 2) ---
         elif payload.kind == "endurance_deployment":
             result_count = sum(1 for i in range(self.tabs.count()) if self.tabs.tabText(i).startswith("Deployment #"))
-            
             result_tab = StrategyResultTab(payload, self)
             tab_name = f"Deployment #{result_count + 1}"
             self.tabs.addTab(result_tab, tab_name)
             self.tabs.setCurrentWidget(result_tab)
 
     def run_optimization(self):
-      
-        # 1. Nejdříve zkontrolujeme, zda už tab "Optimal energy map" existuje
         for i in range(self.tabs.count()):
             if self.tabs.tabText(i) == "Optimal energy map":
-                # Tab existuje! Jen se na něj přepneme a funkci rovnou ukončíme (zabráníme spuštění simulace)
                 self.tabs.setCurrentIndex(i)
                 return
             
-        regen_val = self.spin_regen.value()/100
-        delta_val = self.spin_delta.value()/100
-        self.loading_overlay.show_loading("Calculating optimal strategy...", indefinite=True,progress_text_fmt="Solving grid points ({} / {})")
-        self.optimization_requested.emit(regen_val, delta_val,self.min_e_target,self.max_e_target,self.map_data)
+        regen_val = self.spin_regen.value() / 100
+        delta_val = self.spin_delta.value() / 100
+        self.loading_overlay.show_loading("Calculating optimal strategy...", indefinite=True, progress_text_fmt="Solving grid points ({} / {})")
+        self.optimization_requested.emit(regen_val, delta_val, self.min_e_target, self.max_e_target, self.map_data)
 
     def run_deployment(self):
-        regen_val = self.spin_regen.value()/100
-        delta_val = self.spin_delta.value()/100
-        # Zde použijeme točící se GIF, protože jde jen o jeden konkrétní bod, takže to bude hned
-        self.loading_overlay.show_loading("Calculating optimum energy deployment for given input", indefinite=True)
-        self.deployment_requested.emit(regen_val, delta_val,self.min_e_target,self.max_e_target,self.map_data)
-        
-        
+        regen_val = self.spin_regen.value() / 100
+        delta_val = self.spin_delta.value() / 100
+        self.loading_overlay.show_loading("Calculating optimum energy deployment...", indefinite=True)
+        self.deployment_requested.emit(regen_val, delta_val, self.min_e_target, self.max_e_target, self.map_data)
 
     def stop_loading(self, *args, **kwargs):
         self.loading_overlay.hide_loading()
+
 
 class StrategyResultTab(QWidget):
     def __init__(self, payload, parent=None):
         super().__init__(parent)
         
-        # Rozbalení obou výsledků ze solveru
         self.res_opt = payload.data.get("opt_soc", {})
         self.res_full = payload.data.get("full_soc", {})
         self.meta = payload.meta
         
         main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(15, 15, 15, 15)
         
-        # Kontrola, zda prošla alespoň ta hlavní optimalizace
         if not self.res_opt.get("success", False):
             error_lbl = QLabel("Optimization failed for these specific inputs. Try different values.")
-            error_lbl.setStyleSheet("color: red; font-size: 16px; font-weight: bold;")
+            error_lbl.setStyleSheet("color: #ef4444; font-size: 16px; font-weight: bold;")
             main_layout.addWidget(error_lbl)
             return
 
-        # --- 1. Výpočty pro textové shrnutí ---
-        summary_layout = QHBoxLayout()
+        # --- 1. Summary ---
+        summary_container = QWidget()
+        summary_container.setStyleSheet("""
+            background-color: #f1f5f9; 
+            border: 1px solid #cbd5e1; 
+            border-radius: 8px;
+        """)
+        summary_layout = QHBoxLayout(summary_container)
+        summary_layout.setContentsMargins(20, 20, 20, 20)
         
         total_time = self.res_opt['total_time']
         points = self.res_opt['points']
         total_energy = sum(self.res_opt['e_targets'])
         soc_start = self.res_opt['soc_start']
-        points = self.res_opt['points']
-        total_energy = sum(self.res_opt['e_targets'])
-
         has_full_soc = self.res_full.get("success", False)
         
         if has_full_soc:
-            # Rozdíly: Opt - Full
-            time_saved = self.res_full['total_time'] - total_time   # Kladné = ušetřili jsme čas
-            points_diff = points - self.res_full['points']          # Kladné = získali jsme body
-            energy_diff = total_energy - sum(self.res_full['e_targets']) # Záporné = spálili jsme méně energie
+            time_saved = self.res_full['total_time'] - total_time
+            points_diff = points - self.res_full['points']
+            energy_diff = total_energy - sum(self.res_full['e_targets'])
             
-            # Nastavení barev (Zelená pro zlepšení, Červená pro zhoršení)
-            c_time = "#2ca02c" if time_saved >= 0 else "#d62728"
-            c_pts = "#2ca02c" if points_diff >= 0 else "#d62728"
-            c_eng = "#2ca02c" if energy_diff <= 0 else "#d62728" # U energie je menší = lepší
+            c_time = "#10b981" if time_saved >= 0 else "#ef4444"
+            c_pts = "#10b981" if points_diff >= 0 else "#ef4444"
+            c_eng = "#10b981" if energy_diff <= 0 else "#ef4444"
             
             info_text = (
-                f"<span style='color:#1f77b4;'><b>Opt. SoC Start:</b> {soc_start * 100:.1f} %</span> &nbsp;&nbsp;&nbsp;&nbsp;|&nbsp;&nbsp;&nbsp;&nbsp; "
-                f"<b>Points:</b> {points:.2f} (<span style='color:{c_pts};'>{'+' if points_diff > 0 else ''}{points_diff:.2f}</span>) &nbsp;&nbsp;|&nbsp;&nbsp; "
-                f"<b>Energy:</b> {total_energy:.3f} kWh (<span style='color:{c_eng};'>{'+' if energy_diff > 0 else ''}{energy_diff:.3f}</span>) &nbsp;&nbsp;|&nbsp;&nbsp; "
-                f"<b>Time:</b> {total_time:.2f} s (<span style='color:{c_time};'>{'-' if time_saved > 0 else '+'}{abs(time_saved):.2f} s</span>)"
+                f"<span style='color:#3b82f6; font-size: 18px;'><b>Opt. SoC Start:</b> {soc_start * 100:.1f} %</span>"
+                f"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;"
+                f"<span style='color:#64748b;'><b>Points:</b></span> <span style='color:#0f172a; font-size: 16px;'>{points:.2f}</span> "
+                f"(<span style='color:{c_pts}; font-weight:bold;'>{'+' if points_diff > 0 else ''}{points_diff:.2f}</span>)"
+                f"&nbsp;&nbsp;&nbsp;&nbsp;|&nbsp;&nbsp;&nbsp;&nbsp;"
+                f"<span style='color:#64748b;'><b>Energy:</b></span> <span style='color:#0f172a; font-size: 16px;'>{total_energy:.3f} kWh</span> "
+                f"(<span style='color:{c_eng}; font-weight:bold;'>{'+' if energy_diff > 0 else ''}{energy_diff:.3f}</span>)"
+                f"&nbsp;&nbsp;&nbsp;&nbsp;|&nbsp;&nbsp;&nbsp;&nbsp;"
+                f"<span style='color:#64748b;'><b>Total Time:</b></span> <span style='color:#0f172a; font-size: 16px;'>{total_time:.2f} s</span> "
+                f"(<span style='color:{c_time}; font-weight:bold;'>{'-' if time_saved > 0 else '+'}{abs(time_saved):.2f} s</span>)"
             )
         else:
-            # Fallback text, kdyby srovnávací "Full SoC" solver z nějakého důvodu selhal
             info_text = (
-                f"<span style='color:#1f77b4;'><b>Opt. SoC Start:</b> {soc_start * 100:.1f} %</span> &nbsp;&nbsp;|&nbsp;&nbsp; "
-                f"<b>Total points:</b> {points:.2f} &nbsp;&nbsp;|&nbsp;&nbsp; "
-                f"<b>Total Energy used:</b> {total_energy:.3f} kWh &nbsp;&nbsp;|&nbsp;&nbsp; "
-                f"<b>Opt. total time:</b> {total_time:.2f} s"
+                f"<span style='color:#3b82f6; font-size: 18px;'><b>Opt. SoC Start:</b> {soc_start * 100:.1f} %</span> &nbsp;&nbsp;|&nbsp;&nbsp; "
+                f"<b>Points:</b> {points:.2f} &nbsp;&nbsp;|&nbsp;&nbsp; "
+                f"<b>Energy used:</b> {total_energy:.3f} kWh &nbsp;&nbsp;|&nbsp;&nbsp; "
+                f"<b>Time:</b> {total_time:.2f} s"
             )
         
         lbl_summary = QLabel(info_text)
-        lbl_summary.setStyleSheet("""
-            font-size: 15px; 
-            padding: 12px; 
-            background-color: #05001f; 
-            color: white;
-            border: 1px solid #444;
-            border-radius: 6px;
-        """)
         lbl_summary.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        
+        lbl_summary.setStyleSheet("background: transparent;")
         summary_layout.addWidget(lbl_summary)
-        main_layout.addLayout(summary_layout)
+        
+        main_layout.addWidget(summary_container)
         
         # --- 2. Matplotlib grafy ---
-        self.fig = Figure(figsize=(10, 8), dpi=100) 
+        self.fig = Figure(figsize=(10, 8), dpi=100)
+        self.fig.patch.set_facecolor('#ffffff') 
         self.canvas = FigureCanvasQTAgg(self.fig)
         self.toolbar = NavigationToolbar2QT(self.canvas, self)
         
-        main_layout.addWidget(self.toolbar)
-        main_layout.addWidget(self.canvas)
+        graph_container = QWidget()
+        graph_container.setObjectName("CanvasContainer") # Rámeček a pozadí z globálního stylu
+        graph_layout = QVBoxLayout(graph_container)
+        graph_layout.addWidget(self.toolbar)
+        graph_layout.addWidget(self.canvas)
         
+        main_layout.addWidget(graph_container)
         self.plot_results()
 
     def plot_results(self):
         self.fig.clear()
-        
         laps = np.arange(1, len(self.res_opt['lap_times']) + 1)
-        
-        # Data z optimální strategie
         opt_lap_times = np.array(self.res_opt['lap_times'])
         opt_e_targets = np.array(self.res_opt['e_targets'])
         
-        # Ověříme, jestli máme data i z porovnávací "Full SoC" simulace
         has_full_soc = self.res_full.get("success", False)
         if has_full_soc:
             full_lap_times = np.array(self.res_full['lap_times'])
             full_e_targets = np.array(self.res_full['e_targets'])
 
-        # ==========================================
-        # GRAF 1: Lap Times (Nahoře)
-        # ==========================================
+        # --- LAP TIMES ---
         ax1 = self.fig.add_subplot(2, 1, 1)
-        
-        ax1.plot(laps, opt_lap_times, marker='o', color='#d62728', linewidth=2.5, label='Opt. SoC Start')
+        ax1.plot(laps, opt_lap_times, marker='o', color='#3b82f6', linewidth=2.5, markersize=7, label='Optimal SoC Start')
         
         if has_full_soc:
-            ax1.plot(laps, full_lap_times, marker='x', color='gray', linewidth=2, linestyle='--', label='100% SoC Start')
+            ax1.plot(laps, full_lap_times, marker='x', color='#94a3b8', linewidth=2, linestyle='--', label='100% SoC Start')
         
-        ax1.set_ylabel('Lap time [s]', color='#d62728')
-        ax1.tick_params(axis='y', labelcolor='#d62728')
+        ax1.set_ylabel('Lap time [s]', color='#475569')
+        ax1.tick_params(axis='y', labelcolor='#475569')
+        ax1.tick_params(axis='x', labelcolor='#475569')
         ax1.set_xticks(laps)
-        ax1.grid(True, linestyle='--', alpha=0.5)
-        ax1.set_title('Laptimes')
-        ax1.legend()
+        ax1.grid(True, linestyle='--', alpha=0.3)
+        ax1.set_title('Lap Times Evolution', color='#0f172a', fontweight='bold', pad=10)
+        ax1.legend(frameon=True, edgecolor='#e2e8f0')
 
-        # ==========================================
-        # GRAF 2: Energy Target (Dole)
-        # ==========================================
+        # --- ENERGY ---
         ax2 = self.fig.add_subplot(2, 1, 2, sharex=ax1)
-        
-        ax2.plot(laps, opt_e_targets, marker='s', color='#1f77b4', linewidth=2.5, markersize=6, label='Opt. SoC Start')
+        ax2.plot(laps, opt_e_targets, marker='s', color='#10b981', linewidth=2.5, markersize=6, label='Optimal SoC Start')
         
         if has_full_soc:
-            ax2.plot(laps, full_e_targets, marker='^', color='lightblue', linewidth=2, linestyle='--', label='100% SoC Start')
+            ax2.plot(laps, full_e_targets, marker='^', color='#cbd5e1', linewidth=2, linestyle='--', label='100% SoC Start')
         
-        ax2.set_xlabel('Lap number', fontweight='bold')
-        ax2.set_ylabel('Energy target [kWh]', color='#1f77b4')
-        ax2.tick_params(axis='y', labelcolor='#1f77b4')
-        ax2.grid(True, linestyle='--', alpha=0.5)
-        ax2.set_title('Energy deployment strategy')
-        ax2.legend()
+        ax2.set_xlabel('Lap number', color='#475569', fontweight='bold')
+        ax2.set_ylabel('Energy target [kWh]', color='#475569')
+        ax2.tick_params(axis='y', labelcolor='#475569')
+        ax2.tick_params(axis='x', labelcolor='#475569')
+        ax2.grid(True, linestyle='--', alpha=0.3)
+        ax2.set_title('Energy Deployment per Lap', color='#0f172a', fontweight='bold', pad=10)
+        ax2.legend(frameon=True, edgecolor='#e2e8f0')
 
         self.fig.tight_layout()
         self.canvas.draw()
@@ -4951,7 +5067,6 @@ class OptimalEnergyMapTab(QWidget):
         super().__init__(parent)
         self.meta = solver_res.meta
         
-        # Načteme NAŠE NOVÉ interpolanty a limity z payloadu
         self.e_interpolant = self.meta['e_interpolant']
         self.soc_interpolant = self.meta['soc_interpolant']
         self.grid_regen = self.meta['grid_regen']
@@ -4959,19 +5074,24 @@ class OptimalEnergyMapTab(QWidget):
         self.z_min = self.meta['z_min_e']
         self.z_max = self.meta['z_max_e']
         
-        # --- UI Layout (Stejný jako minule) ---
         main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(15, 15, 15, 15)
+        
+        # --- Matplotlib Canvas ---
         self.fig = Figure(figsize=(8, 6), dpi=100)
+        self.fig.patch.set_facecolor('#ffffff')
         self.canvas = FigureCanvasQTAgg(self.fig)
         self.toolbar = NavigationToolbar2QT(self.canvas, self)
         
+        # --- Controls ---
         control_layout = QHBoxLayout()
         sliders_vbox = QVBoxLayout()
         
-        # Slidery
+        # Regen Slider
         regen_layout = QHBoxLayout()
         self.lbl_regen = QLabel("Regen: 0 %")
         self.lbl_regen.setFixedWidth(100)
+        self.lbl_regen.setStyleSheet("font-weight: bold; color: #475569;")
         self.slider_regen = QSlider(Qt.Orientation.Horizontal)
         self.slider_regen.setMinimum(int(min(self.grid_regen) * 100))
         self.slider_regen.setMaximum(100)
@@ -4979,9 +5099,11 @@ class OptimalEnergyMapTab(QWidget):
         regen_layout.addWidget(self.lbl_regen)
         regen_layout.addWidget(self.slider_regen)
         
+        # Delta Slider
         delta_layout = QHBoxLayout()
         self.lbl_delta = QLabel("Delta: 0 %")
         self.lbl_delta.setFixedWidth(100)
+        self.lbl_delta.setStyleSheet("font-weight: bold; color: #475569;")
         self.slider_delta = QSlider(Qt.Orientation.Horizontal)
         self.slider_delta.setMinimum(int(min(self.grid_delta) * 100))
         self.slider_delta.setMaximum(int(max(self.grid_delta) * 100))
@@ -4992,26 +5114,31 @@ class OptimalEnergyMapTab(QWidget):
         sliders_vbox.addLayout(regen_layout)
         sliders_vbox.addLayout(delta_layout)
         
-        # ZMĚNA: Přidán prostor pro výpis Optimálního SoC!
+        # Výpis (Moderní karta)
         self.lbl_opt_energy = QLabel("Optimal energy:\n-- kWh\n\nOptimal SoC start:\n-- %")
         self.lbl_opt_energy.setStyleSheet("""
             font-size: 15px; 
-            font-weight: bold; 
-            color: #1f77b4; 
-            background-color: #f8f9fa; 
-            padding: 10px; 
-            border: 2px solid #1f77b4;
-            border-radius: 5px;
+            color: #0f172a; 
+            background-color: #f1f5f9; 
+            padding: 15px; 
+            border: 1px solid #cbd5e1;
+            border-radius: 8px;
         """)
         self.lbl_opt_energy.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.lbl_opt_energy.setFixedWidth(250)
         
         control_layout.addLayout(sliders_vbox)
         control_layout.addSpacing(20)
         control_layout.addWidget(self.lbl_opt_energy)
         
-        main_layout.addWidget(self.toolbar)
-        main_layout.addLayout(control_layout) 
-        main_layout.addWidget(self.canvas, stretch=1) 
+        graph_container = QWidget()
+        graph_container.setObjectName("CanvasContainer") # Napojeno na global CSS
+        graph_layout = QVBoxLayout(graph_container)
+        graph_layout.addWidget(self.toolbar)
+        graph_layout.addLayout(control_layout)
+        graph_layout.addWidget(self.canvas, stretch=1)
+        
+        main_layout.addWidget(graph_container)
         
         self.ax3d = None
         self.view_elev = 20  
@@ -5026,14 +5153,12 @@ class OptimalEnergyMapTab(QWidget):
         self.update_point()
 
     def plot_optimal_surface(self):
-        # Nyní tvoříme jen 2D MeshGrid (Regen a Delta)
         r_fine = np.linspace(min(self.grid_regen), max(self.grid_regen), 50)
         d_fine = np.linspace(min(self.grid_delta), max(self.grid_delta), 50)
 
         R_mesh, D_mesh = np.meshgrid(r_fine, d_fine, indexing='ij')
         pts_scipy = np.column_stack((R_mesh.ravel(), D_mesh.ravel()))
         
-        # Místo argmax rovnou vyhodnotíme e_interpolant
         Z_opt_energy = self.e_interpolant(pts_scipy).reshape(R_mesh.shape)
         
         self.fig.clear()
@@ -5045,12 +5170,15 @@ class OptimalEnergyMapTab(QWidget):
             vmin=self.z_min, vmax=self.z_max
         )
         
-        self.ax3d.set_xlabel('Recuperation percentage [%]')
-        self.ax3d.set_ylabel('Time delta [%]')
-        self.ax3d.set_zlabel('Opt energy target [kWh]')
-        self.ax3d.set_title('Optimal energy target')
+        self.ax3d.set_xlabel('Recuperation [%]', color='#475569')
+        self.ax3d.set_ylabel('Time delta [%]', color='#475569')
+        self.ax3d.set_zlabel('Energy target [kWh]', color='#475569')
+        self.ax3d.set_title('Optimal Energy Target', color='#0f172a', fontweight='bold', pad=20)
         
-        self.fig.colorbar(surf, ax=self.ax3d, shrink=0.5, aspect=10, label='Energy target [kWh]')
+        self.ax3d.xaxis.set_tick_params(colors='#64748b')
+        self.ax3d.yaxis.set_tick_params(colors='#64748b')
+        self.ax3d.zaxis.set_tick_params(colors='#64748b')
+
         self.ax3d.view_init(elev=self.view_elev, azim=self.view_azim)
         self.fig.subplots_adjust(left=0.05, right=0.85, bottom=0.05, top=0.95)
 
@@ -5061,13 +5189,16 @@ class OptimalEnergyMapTab(QWidget):
         self.lbl_regen.setText(f"Regen: {regen_val*100:.0f} %")
         self.lbl_delta.setText(f"Delta: {delta_val*100:.0f} %")
 
-        # ROVNOU přečteme hodnoty pro zadaný regen a deltu ze 2D interpolantů
-        # ([0] je nutné, protože interpolant vrací pole výsledků o délce 1)
         opt_e = float(self.e_interpolant([regen_val, delta_val])[0])
         opt_soc = float(self.soc_interpolant([regen_val, delta_val])[0])
         
-        # Aktualizace textu s OBĚMA proměnnými
-        self.lbl_opt_energy.setText(f"Optimal Energy:\n{opt_e:.3f} kWh\n\nOptimal SoC Start:\n{opt_soc*100:.1f} %")
+        self.lbl_opt_energy.setText(
+            f"<div style='font-size: 13px; color: #64748b; text-transform: uppercase;'>Optimal Energy</div>"
+            f"<div style='font-size: 26px; color: #10b981; font-weight: bold;'>{opt_e:.3f} kWh</div>"
+            f"<hr style='border: 1px solid #cbd5e1; margin: 10px 0;'>"
+            f"<div style='font-size: 13px; color: #64748b; text-transform: uppercase;'>Optimal SoC Start</div>"
+            f"<div style='font-size: 26px; color: #3b82f6; font-weight: bold;'>{opt_soc*100:.1f} %</div>"
+        )
 
         if self.point_plot is not None:
             self.point_plot.remove()
@@ -5076,7 +5207,7 @@ class OptimalEnergyMapTab(QWidget):
         if self.ax3d is not None and not np.isnan(opt_e):
             self.point_plot, = self.ax3d.plot(
                 [regen_val * 100], [delta_val * 100], [opt_e],
-                marker='o', color='cyan', markersize=12, markeredgecolor='black', zorder=10
+                marker='o', color='#0f172a', markersize=12, markeredgecolor='white', markeredgewidth=2, zorder=10
             )
             
             self.canvas.draw_idle()
@@ -5093,11 +5224,18 @@ class LoadingOverlay(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, False) 
         self.hide()
         
-        self.setAutoFillBackground(True)
-        palette = self.palette()
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+     
         # Poloprůhledné černé pozadí
-        palette.setColor(QPalette.ColorRole.Window, QColor(0, 0, 0, 200))
-        self.setPalette(palette)
+        self.setObjectName("LoadingOverlay")
+        self.setStyleSheet("""
+            QWidget#LoadingOverlay {
+                background-color: rgba(0, 0, 0, 200);
+            }
+            QLabel {
+                background: transparent;
+            }
+        """)
         
         # Layout
         layout = QVBoxLayout()
@@ -5212,7 +5350,7 @@ import numpy as np
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                              QHBoxLayout, QFormLayout, QGroupBox, QComboBox, 
                              QDoubleSpinBox, QPushButton, QSplitter, QCheckBox, 
-                             QFileDialog, QMessageBox, QDialog, QDialogButtonBox, QInputDialog)
+                             QFileDialog, QMessageBox, QDialog, QDialogButtonBox, QInputDialog,QScrollArea)
 from PyQt6.QtCore import Qt, pyqtSignal
 
 # track for rendering
@@ -5223,7 +5361,7 @@ from src.handlers.requests import SingleLapRequest, EnduranceRequest, LapMapTest
 from src.ui.loader import LoadingOverlay
 from src.utils.config_manager import ConfigManager
 
-from PyQt6.QtGui import QTransform, QColor
+from PyQt6.QtGui import QGuiApplication, QTransform, QColor, QFont
 import matplotlib
 matplotlib.use('QtAgg') 
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
@@ -5234,7 +5372,10 @@ from matplotlib.colors import Normalize
 class MplCanvas(FigureCanvasQTAgg):
     def __init__(self, parent=None, width=5, height=4, dpi=100):
         self.fig = Figure(figsize=(width, height), dpi=dpi)
+        # Nastavení barvy pozadí grafu, aby ladil s moderním UI
+        self.fig.patch.set_facecolor('#ffffff')
         self.axes = self.fig.add_subplot(111)
+        self.axes.set_facecolor('#ffffff')
         super(MplCanvas, self).__init__(self.fig)
         self.setParent(parent)
         FigureCanvasQTAgg.updateGeometry(self)
@@ -5272,23 +5413,59 @@ class MainWindow(QMainWindow):
         self.current_vehicle_name = None
 
         self.setWindowTitle("OptiSim")
-        self.resize(1200, 900)
+        
+        # --- DYNAMICKÁ VELIKOST OKNA ---
+        screen = QGuiApplication.primaryScreen()
+        available_geometry = screen.availableGeometry() # Plocha bez Taskbaru!
 
-        # main layout setup
+        screen_width = available_geometry.width()
+        screen_height = available_geometry.height()
+
+        # Chceme 85 % šířky a 90 % výšky obrazovky
+        target_width = int(screen_width * 0.85)
+        target_height = int(screen_height * 0.90)
+
+        # Omezíme to ale rozumným maximem, aby na 2K monitoru nebyla appka zbytečně obří
+        target_width = min(target_width, 1600)
+        target_height = min(target_height, 1200)
+
+        self.resize(target_width, target_height)
+
+        # Pokud je okno po výpočtu pořád moc blízko velikosti samotné obrazovky (malé notebooky),
+        # je lepší ho rovnou spustit maximalizované
+        if target_width >= screen_width * 0.95 or target_height >= screen_height * 0.95:
+            self.showMaximized()
+
+        # --- HLAVNÍ LAYOUT ---
         self.central_widget = QWidget()
+        self.central_widget.setObjectName("CentralWidget")
         self.setCentralWidget(self.central_widget)
         self.main_layout = QHBoxLayout(self.central_widget)
+        self.main_layout.setContentsMargins(15, 15, 15, 15)
+        self.main_layout.setSpacing(15)
 
-        # left control panel 
+        # --- LEVÝ KONTROLNÍ PANEL ---
         self.control_panel = QWidget()
+        self.control_panel.setObjectName("ControlPanel")
         self.control_layout = QVBoxLayout(self.control_panel)
-        self.control_panel.setFixedWidth(320)
+        # Přidáme drobný pravý okraj (10px), aby texty nebyly nalepené přímo na scrollbar
+        self.control_layout.setContentsMargins(0, 0, 10, 0) 
+        self.control_layout.setSpacing(15)
+        
+        # Obalíme náš kontrolní panel do QScrollArea
+        self.left_scroll_area = QScrollArea()
+        self.left_scroll_area.setObjectName("LeftScrollArea")
+        self.left_scroll_area.setWidgetResizable(True) # Důležité: dovolí obsahu se roztáhnout
+        self.left_scroll_area.setFrameShape(QScrollArea.Shape.NoFrame)
+        self.left_scroll_area.setWidget(self.control_panel)
+        # Scroll area bude mírně širší, aby se do ní vlezl panel i scrollbar
+        self.left_scroll_area.setFixedWidth(360) 
         
         self.init_track_section() 
         
         self.btn_config_car = QPushButton("⚙️ Configure car parameters")
+        self.btn_config_car.setObjectName("BtnConfig")
         self.btn_config_car.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_config_car.setStyleSheet("background-color: #343a40; color: white; font-weight: bold; padding: 10px; margin-top: 10px;")
         self.btn_config_car.clicked.connect(self.open_car_config)
         self.control_layout.addWidget(self.btn_config_car)
         
@@ -5298,35 +5475,45 @@ class MainWindow(QMainWindow):
         self.control_layout.addStretch()
 
         self.btn_create_track = QPushButton("Create track from data")
+        self.btn_create_track.setObjectName("BtnCreateTrack")
         self.btn_create_track.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_create_track.setStyleSheet("""
-            QPushButton { background-color: #6f42c1; color: white; font-weight: bold; padding: 10px; border-radius: 4px; margin-top: 10px; }
-            QPushButton:hover { background-color: #5a32a3; }
-        """)
         self.btn_create_track.clicked.connect(self.on_create_track_clicked)
         self.control_layout.addWidget(self.btn_create_track)
 
         self.btn_compare = QPushButton("Compare logs")
+        self.btn_compare.setObjectName("BtnCompare")
         self.btn_compare.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_compare.setStyleSheet("""
-            QPushButton { background-color: #007bff; color: white; font-weight: bold; padding: 10px; border-radius: 4px; margin-top: 10px; }
-            QPushButton:hover { background-color: #0056b3; }
-        """)
         self.btn_compare.clicked.connect(self.on_compare_clicked)
         self.control_layout.addWidget(self.btn_compare)
 
-        # right panel (graphs)
+        # --- PRAVÝ PANEL (GRAFY) ---
         self.graph_panel = QWidget()
+        self.graph_panel.setObjectName("GraphPanel")
         self.graph_layout = QVBoxLayout(self.graph_panel)
+        self.graph_layout.setContentsMargins(0, 0, 0, 0)
+        
         self.mpl_canvas = MplCanvas(self, width=5, height=4, dpi=100)
-        self.graph_layout.addWidget(self.mpl_canvas)
+        
+        # Obalení plátna do kontejneru pro elegantní stín/rámeček
+        self.canvas_container = QWidget()
+        self.canvas_container.setObjectName("CanvasContainer")
+        canvas_layout = QVBoxLayout(self.canvas_container)
+        canvas_layout.setContentsMargins(10, 10, 10, 10)
+        canvas_layout.addWidget(self.mpl_canvas)
+        
+        self.graph_layout.addWidget(self.canvas_container)
 
+        # --- HLAVNÍ ROZDĚLOVAČ (SPLITTER) ---
         splitter = QSplitter(Qt.Orientation.Horizontal)
-        splitter.addWidget(self.control_panel)
+        splitter.setObjectName("MainSplitter")
+        splitter.setHandleWidth(8)
+        # ZDE PŘIDÁVÁME SCROLL AREA MÍSTO SAMOTNÉHO PANELU
+        splitter.addWidget(self.left_scroll_area) 
         splitter.addWidget(self.graph_panel)
-        splitter.setSizes([320, 880])
+        splitter.setSizes([360, 940])
         self.main_layout.addWidget(splitter)
 
+        # --- LOADER A STYLY ---
         self.loading_overlay = LoadingOverlay(self)
         
         self.controller.simulationStarted.connect(self.loading_overlay.show_loading)
@@ -5410,6 +5597,8 @@ class MainWindow(QMainWindow):
     def init_track_section(self):
         group = QGroupBox("Track selection")
         layout = QFormLayout()
+        layout.setContentsMargins(15, 25, 15, 15)
+        layout.setSpacing(10)
         self.combo_track = QComboBox()
         self.combo_track.currentIndexChanged.connect(self.on_track_changed) 
         layout.addRow("Track:", self.combo_track)
@@ -5419,22 +5608,26 @@ class MainWindow(QMainWindow):
     def init_quick_settings(self):
         group = QGroupBox("Simulation settings")
         layout = QFormLayout()
+        layout.setContentsMargins(15, 25, 15, 15)
+        layout.setSpacing(12)
 
         # 1. vehicle model
         self.combo_model = QComboBox()
-        self.combo_model.addItem("mass point (Euler)", "mass_point")
-        self.combo_model.addItem("mass point (Rk4)", "mass_point_rk4")
-        self.combo_model.addItem("single track", "single_track")
+        self.combo_model.addItem("Mass point (Rk4)", "mass_point_rk4")
+        self.combo_model.addItem("Single track", "single_track")
         layout.addRow("Vehicle model:", self.combo_model)
 
         # 2. vehicle profile selector
         veh_layout = QHBoxLayout()
         veh_layout.setContentsMargins(0, 0, 0, 0)
+        veh_layout.setSpacing(8)
         self.combo_vehicle = QComboBox()
         self.combo_vehicle.currentIndexChanged.connect(self.on_vehicle_changed)
         
         self.btn_new_vehicle = QPushButton("+")
-        self.btn_new_vehicle.setFixedWidth(30)
+        self.btn_new_vehicle.setObjectName("BtnTool")
+        self.btn_new_vehicle.setFixedWidth(32)
+        self.btn_new_vehicle.setFixedHeight(32)
         self.btn_new_vehicle.clicked.connect(self.on_new_vehicle_clicked)
         self.btn_new_vehicle.setToolTip("create a new vehicle profile")
         
@@ -5492,22 +5685,24 @@ class MainWindow(QMainWindow):
     def init_run_buttons(self):
         group = QGroupBox("Run actions")
         layout = QVBoxLayout()
+        layout.setContentsMargins(15, 25, 15, 15)
+        layout.setSpacing(10)
 
         self.btn_run = QPushButton("Run single lap")
+        self.btn_run.setObjectName("BtnRunSingle")
         self.btn_run.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_run.setStyleSheet("background-color: #28a745; color: white; font-weight: bold; padding: 10px; margin-bottom: 5px;")
         self.btn_run.clicked.connect(self.on_run_single_clicked)
         layout.addWidget(self.btn_run)
 
         self.btn_endurance_strategy = QPushButton("Endurance strategy")
+        self.btn_endurance_strategy.setObjectName("BtnEndurance")
         self.btn_endurance_strategy.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_endurance_strategy.setStyleSheet("background-color: #17a2b8; color: white; font-weight: bold; padding: 10px; margin-bottom: 5px; border-radius: 4px;")
         self.btn_endurance_strategy.clicked.connect(self.on_endurance_strategy_clicked)
         layout.addWidget(self.btn_endurance_strategy)
 
         self.btn_acp_test = QPushButton("Generate laptime map")
+        self.btn_acp_test.setObjectName("BtnLapMap")
         self.btn_acp_test.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_acp_test.setStyleSheet("background-color: #6c757d; color: white; padding: 10px; font-weight: bold; border-radius: 4px;")
         self.btn_acp_test.clicked.connect(self.on_lap_map_clicked)
         layout.addWidget(self.btn_acp_test)
 
@@ -5530,6 +5725,7 @@ class MainWindow(QMainWindow):
         
         strict_params.pop("laps", None)
         strict_params.pop("ds", None) 
+        strict_params.pop("mass", None)
         
         p_kw = strict_params.pop("power_limit", 80.0)
         strict_params["power_max"] = p_kw * 1000.0
@@ -5587,6 +5783,7 @@ class MainWindow(QMainWindow):
     def plot_track_map(self, track: Track):
         self.mpl_canvas.fig.clf()
         ax = self.mpl_canvas.fig.add_subplot(111)
+        ax.set_facecolor('#ffffff') # Bílé pozadí grafu
         x, y = track.x, track.y
         alpha_deg = np.degrees(track.alpha) if hasattr(track, 'alpha') and track.alpha is not None else np.zeros_like(x)
 
@@ -5602,8 +5799,10 @@ class MainWindow(QMainWindow):
         ax.set_xlim(x.min() - 20, x.max() + 20)
         ax.set_ylim(y.min() - 20, y.max() + 20)
         ax.set_aspect('equal')
-        ax.plot(x[0], y[0], 'o', color='lime', markersize=8, markeredgecolor='black')
+        ax.plot(x[0], y[0], 'o', color='#10b981', markersize=8, markeredgecolor='black') # Moderní zelená tečka
         ax.axis('off')
+        
+        self.mpl_canvas.fig.tight_layout()
         self.mpl_canvas.draw()
   
     # ==========================================
@@ -5698,6 +5897,8 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "error", f"track generation failed:\n{message}")
 
 
+
+
 class CarConfigDialog(QDialog):
     def __init__(self, current_params, parent=None):
         super().__init__(parent)
@@ -5705,10 +5906,27 @@ class CarConfigDialog(QDialog):
         
         self.setWindowTitle("Configure car")
         self.setModal(True) 
-        self.resize(300, 250)
+        self.resize(360, 320) # Mírně zvětšeno pro lepší padding
+
+        # Aplikování stejného moderního stylu
+        if parent and hasattr(parent, 'styleSheet'):
+            self.setStyleSheet(parent.styleSheet())
+        
+        self.setStyleSheet(self.styleSheet() + """
+            QDialog {
+                background-color: #ffffff; 
+            }
+            QLabel {
+                color: #1e293b;
+            }
+        """)
 
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(15)
+        
         form_layout = QFormLayout()
+        form_layout.setSpacing(12)
 
         def create_spin(val, unit, min_val=0.0, max_val=10000.0, step=0.1):
             spin = QDoubleSpinBox()
@@ -5744,9 +5962,28 @@ class CarConfigDialog(QDialog):
 
         layout.addLayout(form_layout)
 
+        # Spodní tlačítka s moderním vzhledem
         self.button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
         self.button_box.accepted.connect(self.accept)
         self.button_box.rejected.connect(self.reject)
+        
+        # Nastavení stylů pro defaultní dialogová tlačítka
+        save_btn = self.button_box.button(QDialogButtonBox.StandardButton.Save)
+        cancel_btn = self.button_box.button(QDialogButtonBox.StandardButton.Cancel)
+        
+        if save_btn:
+            save_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            save_btn.setStyleSheet("""
+                QPushButton { background-color: #3b82f6; color: white; border-radius: 6px; padding: 8px 16px; font-weight: bold; }
+                QPushButton:hover { background-color: #2563eb; }
+            """)
+        if cancel_btn:
+            cancel_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            cancel_btn.setStyleSheet("""
+                QPushButton { background-color: #e2e8f0; color: #334155; border-radius: 6px; padding: 8px 16px; font-weight: bold; }
+                QPushButton:hover { background-color: #cbd5e1; }
+            """)
+
         layout.addWidget(self.button_box)
 
     def get_params(self):
@@ -5950,31 +6187,101 @@ class CompareWindow(QWidget):
 import datetime
 import numpy as np
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
-                             QTabWidget, QGroupBox, QGridLayout, QFileDialog, QDoubleSpinBox,QApplication,QPushButton)
+                             QTabWidget, QGroupBox, QGridLayout, QFileDialog, QDoubleSpinBox, QApplication, QPushButton)
 from PyQt6.QtCore import Qt
 import pyqtgraph as pg
 from src.utils.saver import save_results_to_npz
 import os
 
 class ResultsWindow(QWidget):
-    def __init__(self, res, car, track,ds):
+    # Moderní barevná paleta
+    C_SIM = '#3b82f6'     # Modrá
+    C_REF = '#334155'     # Tmavě šedá
+    C_DELTA = '#ef4444'   # Červená
+    C_ACC = '#10b981'     # Zelená
+    C_BRK = '#ef4444'     # Červená
+    C_REGEN = '#8b5cf6'   # Fialová
+    C_ENERGY = '#f59e0b'  # Žlutá/Oranžová
+
+    def __init__(self, res, car, track, ds):
         super().__init__()
 
-        pg.setConfigOption('background', 'w')  # Bílé pozadí (white)
-        pg.setConfigOption('foreground', 'k')  # Černé texty a osy (black)
+        # Globální vyhlazování a barvy pro hezčí grafy
+        pg.setConfigOption('background', 'w')
+        pg.setConfigOption('foreground', '#334155')
+        pg.setConfigOptions(antialias=True)
+        
         self.res = res
         self.car = car
         self.track = track
         self.ds = ds
 
-        self.resize(1100, 800)
-        
+        self.resize(1100, 850)
         self.center_window()
         self.setWindowTitle(f"Simulation results - {res.lap_time:.3f} s")
-     
         
-        #main layout
+        # --- APLIKACE MODERNÍHO VZHLEDU (QSS) ---
+        self.setStyleSheet("""
+            QWidget {
+                font-family: 'Segoe UI', system-ui, sans-serif;
+                font-size: 10pt;
+                color: #334155;
+                background-color: #f8f9fa;
+            }
+            QGroupBox {
+                background-color: #ffffff;
+                border: 1px solid #e2e8f0;
+                border-radius: 8px;
+                margin-top: 15px;
+                padding-top: 5px;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                subcontrol-position: top left;
+                padding: 0px 5px;
+                color: #475569;
+                font-weight: bold;
+                font-size: 11pt;
+            }
+            QTabWidget::pane {
+                border: 1px solid #e2e8f0;
+                border-radius: 8px;
+                background: #ffffff;
+            }
+            QTabBar::tab {
+                background: #e2e8f0;
+                color: #64748b;
+                padding: 10px 20px;
+                border-top-left-radius: 6px;
+                border-top-right-radius: 6px;
+                margin-right: 4px;
+                font-weight: bold;
+            }
+            QTabBar::tab:selected {
+                background: #ffffff;
+                color: #0f172a;
+                border-bottom: 2px solid #3b82f6;
+            }
+            QTabBar::tab:hover:!selected {
+                background: #cbd5e1;
+            }
+            QPushButton {
+                background-color: #3b82f6; 
+                color: white; 
+                font-weight: bold; 
+                padding: 8px 15px; 
+                border-radius: 6px;
+                border: none;
+            }
+            QPushButton:hover {
+                background-color: #2563eb;
+            }
+        """)
+        
+        # main layout
         self.layout = QVBoxLayout(self)
+        self.layout.setContentsMargins(15, 15, 15, 15)
+        self.layout.setSpacing(15)
         
         # 1. Summary panel 
         self.init_summary_panel()
@@ -5989,42 +6296,62 @@ class ResultsWindow(QWidget):
         self.init_sensitivity_tab()
         self.init_map_tab()
         self.init_drs_map_tab()
-        self.init_trajectory_tab()
         self.init_soc_tab()
 
     def center_window(self):
-        """centers where is mice"""
-        # get frame geometry
         qr = self.frameGeometry()
-        # get the mice position
         cp = QApplication.primaryScreen().availableGeometry().center()
-
         qr.moveCenter(cp)
-        
         self.move(qr.topLeft())
-    
         self.showNormal()
+
+    def _style_plot(self, plot, title, y_label, units):
+        """Pomocná metoda pro krásný čistý vzhled pyqtgraph plotů"""
+        plot.setBackground("#FFFFFF")
+        plot.setTitle(title, color='#0f172a', size='12pt', bold=True)
+        plot.setLabel('left', y_label, units=units, color='#64748b')
+        plot.setLabel('bottom', 'Distance', units='m', color='#64748b')
+        
+        
+        # Obarvení os a textu na jemnou šedou
+        ax_pen = pg.mkPen(color='#94a3b8', width=1)
+        plot.getAxis('left').setPen(ax_pen)
+        plot.getAxis('left').setTextPen('#475569')
+        plot.getAxis('bottom').setPen(ax_pen)
+        plot.getAxis('bottom').setTextPen('#475569')
+        
+        # Jemná mřížka
+        plot.showGrid(x=True, y=True, alpha=0.15)
+        return plot
 
     def init_summary_panel(self):
         group = QGroupBox("Lap Summary")
+        group.setObjectName("HighlightedGroup")
         main_h_layout = QHBoxLayout() 
+        main_h_layout.setContentsMargins(15, 15, 15, 15)
         
-        # left part
         stats_widget = QWidget()
         grid = QGridLayout(stats_widget)
         grid.setContentsMargins(0, 0, 0, 0)
+        grid.setHorizontalSpacing(30)
+        stats_widget.setStyleSheet("background-color: transparent;")
         
         def add_stat(row, col, label, value, unit):
             lbl_name = QLabel(f"<b>{label}:</b>")
+            lbl_name.setStyleSheet("color: #64748b; font-size: 13px;")
             lbl_val = QLabel(f"{value}")
-            lbl_val.setStyleSheet("color: #007bff; font-size: 14px; font-weight: bold;")
+            lbl_val.setStyleSheet("color: #3b82f6; font-size: 16px; font-weight: bold;")
+            lbl_unit = QLabel(unit)
+            lbl_unit.setStyleSheet("color: #94a3b8; font-size: 13px;")
+            lbl_name.setStyleSheet("color: #64748b; font-size: 13px; background-color: transparent;")
+            
             grid.addWidget(lbl_name, row, col)
             grid.addWidget(lbl_val, row, col+1)
-            grid.addWidget(QLabel(unit), row, col+2)
+            grid.addWidget(lbl_unit, row, col+2)
 
         max_v = np.max(self.res.v) * 3.6
         avg_v = np.mean(self.res.v) * 3.6
-        total_energy = self.res.E[-1]
+        total_energy = self.res.E[-1] - self.res.E[0]
         
         add_stat(0, 0, "Lap Time", f"{self.res.lap_time:.3f}", "s")
         add_stat(0, 3, "Energy Used", f"{total_energy:.3f}", "kWh")
@@ -6032,110 +6359,66 @@ class ResultsWindow(QWidget):
         add_stat(1, 3, "Avg Speed", f"{avg_v:.1f}", "km/h")
         
         main_h_layout.addWidget(stats_widget)
-        
-        # Save Button and spacer
-        main_h_layout.addStretch() # puts the button to right
+        main_h_layout.addStretch()
         
         self.btn_save = QPushButton("Save Results (.npz)")
-        self.btn_save.setFixedWidth(150)
+        self.btn_save.setFixedWidth(160)
         self.btn_save.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_save.setStyleSheet("""
-            QPushButton {
-                background-color: #17a2b8; 
-                color: white; 
-                font-weight: bold; 
-                padding: 8px; 
-                border-radius: 4px;
-            }
-            QPushButton:hover {
-                background-color: #138496;
-            }
-        """)
         self.btn_save.clicked.connect(self.on_save_clicked)
         
         main_h_layout.addWidget(self.btn_save)
-        
         group.setLayout(main_h_layout)
         self.layout.addWidget(group)
 
-    def calculate_validation_metrics(self,sim_res, ref_data):
-        """
-        Porovná výsledky simulace s referenčními daty.
-        
-        Args:
-            sim_res: SolverResults (obsahuje .s, .t, .v ze solveru)
-            ref_data: Dict {'s': ..., 'v': ..., 'p': ...} (Reference z Tracku)
-                    Předpoklad: 'v' je v m/s, 'p' je v kW
-        """
+    def calculate_validation_metrics(self, sim_res, ref_data):
         if ref_data is None or ref_data['v'] is None:
             return None
 
-        # 1. Získání os (Solver vs Reference)
-        s_sim = sim_res.s          # Mřížka solveru (např. po 0.5m)
-        s_ref = ref_data['s']      # Mřížka trati (např. z logu)
-        v_ref_raw = ref_data['v']  # Rychlost na mřížce trati [m/s]
+        s_sim = sim_res.s
+        s_ref = ref_data['s']
+        v_ref_raw = ref_data['v']
         
-        # 2. DOPOČET REFERENČNÍHO ČASU (Integrace: dt = ds / v)
-        # Musíme to udělat na mřížce reference, než budeme interpolovat
         ds_ref = np.diff(s_ref, prepend=0)
-        
-        # Ošetření dělení nulou (pokud auto v logu stálo nebo jelo super pomalu)
-        # Cokoliv pod 1.0 m/s nahradíme 1.0 m/s pro výpočet času, jinak čas vyletí do nekonečna
         v_safe = np.maximum(v_ref_raw, 1.0) 
-        
         dt_ref = ds_ref / v_safe
-        t_ref_calculated = np.cumsum(dt_ref) # Kumulativní součet -> Časová osa reference
+        t_ref_calculated = np.cumsum(dt_ref)
 
-        # 3. INTERPOLACE NA MŘÍŽKU SOLVERU
-        # Abychom mohli odečítat (Sim - Real), musí mít vektory stejnou délku
         v_ref_interp = np.interp(s_sim, s_ref, v_ref_raw)
         t_ref_interp = np.interp(s_sim, s_ref, t_ref_calculated)
         
-        # Power (volitelně) - Log je v kW, Solver je ve Wattech -> Převedeme log na W nebo Sim na kW
-        # Zde převedeme interp log na Watty pro konzistenci výpočtů, v grafu to pak dáme na kW
         p_ref_interp = None
         if ref_data.get('p') is not None:
-            p_ref_interp = np.interp(s_sim, s_ref, ref_data['p']) * 1000.0 # kW -> W
+            p_ref_interp = np.interp(s_sim, s_ref, ref_data['p']) * 1000.0
 
-        # 4. VÝPOČET DELT
-        # Delta V: Kladné = Sim je rychlejší
         delta_v = sim_res.v - v_ref_interp 
         
-        # Delta T: Kladné = Sim je pomalejší (ztrácí čas)
-        # Resetujeme start na 0, abychom porovnávali čistý průjezd kola
         t_sim_zeroed = sim_res.t - sim_res.t[0]
         t_ref_zeroed = t_ref_interp - t_ref_interp[0]
         
         delta_t = t_sim_zeroed - t_ref_zeroed
-
-        # 5. METRIKY
         rmse_v = np.sqrt(np.mean(delta_v**2))
         total_time_diff = t_sim_zeroed[-1] - t_ref_zeroed[-1]
         
         return {
             's': s_sim,
-            'v_ref': v_ref_interp,   # [m/s] aligned
-            't_ref': t_ref_zeroed,   # [s] aligned
-            'p_ref': p_ref_interp,   # [W] aligned
-            'delta_v': delta_v,      # [m/s]
-            'delta_t': delta_t,      # [s]
+            'v_ref': v_ref_interp,
+            't_ref': t_ref_zeroed,
+            'p_ref': p_ref_interp,
+            'delta_v': delta_v,
+            'delta_t': delta_t,
             'rmse_v': rmse_v,
             'diff_total': total_time_diff
         }
 
     def on_save_clicked(self):
-        """opens dialog and saves the results."""
-       
         now_str = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M")
         default_name = f"{self.track.name}_{now_str}.npz"
         
-        # results folder
         if not os.path.exists("results"):
             os.makedirs("results")
             
         default_path = os.path.join("results", default_name)
 
-        # QFileDialog
         filepath, _ = QFileDialog.getSaveFileName(
             self,
             "Save Simulation Results",
@@ -6145,248 +6428,124 @@ class ResultsWindow(QWidget):
 
         if filepath:
             try:
-                save_results_to_npz(
-                    filepath, 
-                    self.res, 
-                    self.track, 
-                    self.ds
-                )
-               
+                save_results_to_npz(filepath, self.res, self.track, self.ds)
                 self.btn_save.setText("Saved!")
-                self.btn_save.setStyleSheet("background-color: #28a745; color: white; font-weight: bold; padding: 8px; border-radius: 4px;")
+                self.btn_save.setStyleSheet("background-color: #10b981; color: white;")
             except Exception as e:
                 print(f"Error saving file: {e}")
                 self.btn_save.setText("Error!")
-                self.btn_save.setStyleSheet("background-color: #dc3545; color: white;")
+                self.btn_save.setStyleSheet("background-color: #ef4444; color: white;")
 
     def init_dynamics_tab(self):
         widget = QWidget()
         layout = QVBoxLayout()
+        layout.setContentsMargins(15, 15, 15, 15)
+        layout.setSpacing(15)
         
-        # --- 1. SPEED GRAPH ---
-        plot_v = pg.PlotWidget(title="Velocity Comparison")
-        plot_v.setLabel('left', 'Speed', units='km/h')
-        plot_v.setLabel('bottom', 'Distance', units='m')
-        #plot_v.showGrid(x=True, y=True)
-        plot_v.addLegend()
+        # --- SPEED ---
+        plot_v = pg.PlotWidget()
+        self._style_plot(plot_v, "Velocity Comparison", "Speed", "km/h")
+        
+        legend_v = plot_v.addLegend(offset=(20, 20), pen=pg.mkPen('#e2e8f0'), brush=pg.mkBrush('#ffffffEE'))
+        legend_v.setLabelTextColor('#0f172a')
       
-        # Simulation (Blue)
-        plot_v.plot(self.res.s, self.res.v * 3.6, pen=pg.mkPen('b', width=2), name="Simulation")
+        plot_v.plot(self.res.s, self.res.v * 3.6, pen=pg.mkPen(self.C_SIM, width=2.5), name="Simulation")
         
-        # Validation Logic
         val_data = None
         if self.track.ref_data is not None:
-           
             val_data = self.calculate_validation_metrics(self.res, self.track.ref_data)
-            
             if val_data:
-                # Reference (Black Dashed)
-                v_ref_kmh = val_data['v_ref'] * 3.6
-                plot_v.plot(val_data['s'], v_ref_kmh, 
-                           pen=pg.mkPen('k', width=2, style=Qt.PenStyle.DashLine), 
+                plot_v.plot(val_data['s'], val_data['v_ref'] * 3.6, 
+                           pen=pg.mkPen(self.C_REF, width=2, style=Qt.PenStyle.DashLine), 
                            name=f"Real Log (RMSE: {val_data['rmse_v']*3.6:.1f} km/h)")
 
         layout.addWidget(plot_v)
 
-        # --- 2. DELTA TIME GRAPH ---
-        plot_dt = pg.PlotWidget(title="Delta Time (Accumulated Gap)")
-        plot_dt.setLabel('left', 'Delta Time', units='s')
-        plot_dt.setLabel('bottom', 'Distance', units='m')
-        #plot_dt.showGrid(x=True, y=True)
+        # --- DELTA TIME ---
+        plot_dt = pg.PlotWidget()
+        self._style_plot(plot_dt, "Delta Time (Accumulated Gap)", "Delta Time", "s")
         plot_dt.setXLink(plot_v)
         
-        # Zero Line (Vizuální linka)
-        plot_dt.addItem(pg.InfiniteLine(pos=0, angle=0, pen=pg.mkPen('k', width=1)))
+        plot_dt.addItem(pg.InfiniteLine(pos=0, angle=0, pen=pg.mkPen('#334155', width=1.5)))
 
         if val_data:
-            # 1. Vykreslíme křivku delty a uložíme si ji do proměnné
-            dt_curve = plot_dt.plot(val_data['s'], val_data['delta_t'], pen=pg.mkPen('r', width=2))
-            
-            # 2. Vytvoříme pomocnou "neviditelnou" nulovou křivku pro výplň
-            # (FillBetweenItem funguje nejlépe mezi dvěma PlotCurveItems)
+            dt_curve = plot_dt.plot(val_data['s'], val_data['delta_t'], pen=pg.mkPen(self.C_DELTA, width=2.5))
             dummy_zero = pg.PlotCurveItem(val_data['s'], np.zeros_like(val_data['s']), pen=None)
             plot_dt.addItem(dummy_zero)
             
-            # 3. Vytvoříme výplň mezi Delta křivkou a nulou
-            # Používáme přímé reference 'dt_curve' a 'dummy_zero' - ŽÁDNÉ INDEXY!
-            fill = pg.FillBetweenItem(dt_curve, dummy_zero, brush=(255, 0, 0, 50))
+            fill_color = pg.mkColor(self.C_DELTA)
+            fill_color.setAlpha(40)
+            fill = pg.FillBetweenItem(dt_curve, dummy_zero, brush=fill_color)
             plot_dt.addItem(fill)
             
-            # Title update
             diff = val_data['diff_total']
             sign = "+" if diff > 0 else ""
-            plot_dt.setTitle(f"Delta Time (Final Gap: {sign}{diff:.3f} s)")
+            plot_dt.setTitle(f"Delta Time (Final Gap: {sign}{diff:.3f} s)", color='#0f172a', size='12pt', bold=True)
         else:
-            plot_dt.setTitle("No reference data available")
+            plot_dt.setTitle("No reference data available", color='#64748b')
 
         layout.addWidget(plot_dt)
         widget.setLayout(layout)
-        self.tabs.addTab(widget, "Dynamics & Validation")
-
-    def init_trajectory_tab(self):
-        """
-        Porovná ideální centerline (Track) a optimalizovanou stopu (Car).
-        Rekonstruuje XY pozici auta pomocí referenční čáry a odchylky 'n'.
-        Přidává graf steering angle.
-        """
-        widget = QWidget()
-        layout = QVBoxLayout()
-        
-        # --- 1. Výpočet souřadnic auta ---
-        if not hasattr(self.res, 'n') or len(self.res.n) == 0:
-            layout.addWidget(QLabel("Error: 'n' (lateral deviation) missing in SolverResults."))
-            widget.setLayout(layout)
-            self.tabs.addTab(widget, "Trajectory")
-            return
-
-        s_sim = self.res.s
-        n_sim = self.res.n 
-        
-        # Interpolace X, Y reference na mřížku solveru
-        x_ref = np.interp(s_sim, self.track.s, self.track.x)
-        y_ref = np.interp(s_sim, self.track.s, self.track.y)
-        
-        # Výpočet heading reference
-        dx = np.gradient(x_ref)
-        dy = np.gradient(y_ref)
-        psi_ref = np.arctan2(dy, dx)
-        
-        # Rekonstrukce pozice auta
-        x_car = x_ref - n_sim * np.sin(psi_ref)
-        y_car = y_ref + n_sim * np.cos(psi_ref)
-
-        # --- 2. Grafy ---
-        
-        # A) Lateral Deviation Plot (n)
-        plot_dev = pg.PlotWidget(title="Lateral deviation (n)")
-        plot_dev.setLabel('left', 'Deviation', units='m')
-        plot_dev.setLabel('bottom', 'Distance', units='m')
-        plot_dev.showGrid(x=True, y=True)
-        
-        # Centerline (0) a Tunel
-        plot_dev.addItem(pg.InfiniteLine(pos=0, angle=0, pen=pg.mkPen('k', width=1, style=Qt.PenStyle.DashLine)))    
-        plot_dev.plot(s_sim, n_sim, pen=pg.mkPen('b', width=2), name="Deviation")
-
-        # B) Steering Angle Plot (Delta)
-        plot_steer = pg.PlotWidget(title="Wheel angle")
-        plot_steer.setLabel('left', 'Steer', units='deg') # Lepší čitelnost ve stupních
-        plot_steer.setLabel('bottom', 'Distance', units='m')
-        plot_steer.showGrid(x=True, y=True)
-        
-        # Příprava dat pro Delta (Input vs State length fix)
-        delta_data = self.res.delta
-        s_steer = s_sim
-        
-        # Delta má obvykle délku N, s_sim má N+1. Ořízneme s_sim.
-        if len(delta_data) < len(s_steer):
-            s_steer = s_sim[:len(delta_data)]
-            
-        # Převod na stupně
-        delta_deg = np.degrees(delta_data)
-        
-        # Vykreslení
-        plot_steer.plot(s_steer, delta_deg, pen=pg.mkPen('r', width=2), name="Steering")
-        plot_steer.addItem(pg.InfiniteLine(pos=0, angle=0, pen=pg.mkPen('k', width=1, style=Qt.PenStyle.DashLine)))
-
-        # C) XY Map Comparison
-        plot_map = pg.PlotWidget(title="Trajectory comparison")
-        plot_map.setAspectLocked(True)
-        plot_map.setLabel('bottom', 'X', units='m')
-        plot_map.setLabel('left', 'Y', units='m')
-        plot_map.addLegend()
-
-        plot_map.plot(x_ref, y_ref, pen=pg.mkPen('k', width=1, style=Qt.PenStyle.DashLine), name="Track Center")
-        plot_map.plot(x_car, y_car, pen=pg.mkPen('b', width=2), name="Car Path")
-        plot_map.plot([x_car[0]], [y_car[0]], symbol='t1', symbolBrush='g', symbolSize=15, name="Start")
-
-        # --- Layout Assembly ---
-        # Stretch faktory určují poměr výšky (1:1:2)
-        layout.addWidget(plot_dev, stretch=1)
-        layout.addWidget(plot_steer, stretch=1)
-        layout.addWidget(plot_map, stretch=2)
-        
-        widget.setLayout(layout)
-        self.tabs.addTab(widget, "Trajectory")
+        self.tabs.addTab(widget, "Dynamics")
 
     def init_powertrain_tab(self):
         widget = QWidget()
         layout = QVBoxLayout()
+        layout.setContentsMargins(15, 15, 15, 15)
+        layout.setSpacing(15)
         
-        # --- 1. POWER GRAPH (Zůstává stejný) ---
+        # --- POWER ---
         v_interp = self.res.v[:-1]
         power_kw = (self.res.f_acc * v_interp) / 1000.0 
         brake_kw = (self.res.f_brake * v_interp) / 1000.0 
         
-        plot_p = pg.PlotWidget(title="Power usage")
-        plot_p.setLabel('left', 'Power', units='kW')
-        plot_p.setLabel('bottom', 'Distance', units='m')
-        plot_p.addLegend() 
+        plot_p = pg.PlotWidget()
+        self._style_plot(plot_p, "Power Usage", "Power", "kW")
+        legend_p = plot_p.addLegend(offset=(20, 20), pen=pg.mkPen('#e2e8f0'), brush=pg.mkBrush('#ffffffEE'))
+        legend_p.setLabelTextColor('#0f172a')
         
-        plot_p.plot(self.res.s[:-1], power_kw, pen=pg.mkPen('g', width=2), name="Sim")
-        plot_p.plot(self.res.s[:-1], brake_kw, pen=pg.mkPen('r', width=2), name="Sim")
-        plot_p.plot(self.res.s[:-1],-self.res.recuperation/1000,pen=pg.mkPen('b', width=2), name="Sim")
+        plot_p.plot(self.res.s[:-1], power_kw, pen=pg.mkPen(self.C_ACC, width=2.5), name="Traction")
+        plot_p.plot(self.res.s[:-1], brake_kw, pen=pg.mkPen(self.C_BRK, width=2.5), name="Braking")
+        plot_p.plot(self.res.s[:-1], -self.res.recuperation/1000, pen=pg.mkPen(self.C_REGEN, width=2.5), name="Recuperation")
         
-        # --- PŘÍPRAVA NA ENERGY GRAPH ---
-        # Spočítáme čistě trakční energii (bez rekuperace)
-        # E = integral(P * dt) -> sum(P * dt)
-        # dt = ds / v
-        
-        # Získáme časové kroky pro simulaci
+        # --- ENERGY ---
         dt_sim = np.diff(self.res.t)
-        
-        # Filtrujeme jen kladný výkon (Trakce)
-        # power_kw je výkon na kolech, musíme ho vydělit účinností motoru, abychom dostali spotřebu z baterie
-        # self.car.power_eff je např 0.9. Pokud motor dává 90kW, z baterky jde 100kW.
         pos_power_battery = np.maximum(power_kw, 0) / self.car.power_eff 
-        
-        # Energie v kWh = (kW * s) / 3600
         e_step_sim = (pos_power_battery * dt_sim) / 3600.0
-        e_cum_sim = np.cumsum(e_step_sim)
-        # Přidáme nulu na začátek, aby délka odpovídala s[:-1] nebo s
-        e_cum_sim = np.insert(e_cum_sim, 0, 0.0)
+        e_cum_sim = np.insert(np.cumsum(e_step_sim), 0, 0.0)
 
-        # --- VALIDATION DATA PROCESSING ---
         val_data = None
-        p_ref_kw = None
         e_cum_real = None
         
         if self.track.ref_data is not None:
             val_data = self.calculate_validation_metrics(self.res, self.track.ref_data)
-            
             if val_data and val_data.get('p_ref') is not None:
-                # Real Power
-                p_ref_kw = val_data['p_ref'] / 1000.0 # W -> kW
-                plot_p.plot(val_data['s'], p_ref_kw, pen=pg.mkPen('k', width=2, style=Qt.PenStyle.DotLine), name="Real Power")
-                
-                # Real Energy (Traction Only)
-                # Musíme odhadnout dt pro realitu
-                # Validation metrics nám vrací 'v_ref' interpolované na s_sim
-                # Takže můžeme použít stejné dt_sim (protože jsme na stejné dráze)
-                # NEBO přesněji: dt = ds / v_ref
+                p_ref_kw = val_data['p_ref'] / 1000.0 
+                plot_p.plot(val_data['s'], p_ref_kw, pen=pg.mkPen(self.C_REF, width=2, style=Qt.PenStyle.DotLine), name="Real Power")
                 
                 ds = np.diff(val_data['s'])
                 v_ref_safe = np.maximum(val_data['v_ref'][:-1], 1.0)
                 dt_ref = ds / v_ref_safe
-               
                 pos_power_real = np.maximum(p_ref_kw[:-1], 0)
                 
                 e_step_real = (pos_power_real * dt_ref) / 3600.0
-                e_cum_real = np.cumsum(e_step_real)
-                e_cum_real = np.insert(e_cum_real, 0, 0.0)
+                e_cum_real = np.insert(np.cumsum(e_step_real), 0, 0.0)
 
-       
-        plot_e = pg.PlotWidget(title="Cumulative energy (discharge only)")
-        plot_e.setLabel('left', 'Energy Out', units='kWh')
-        plot_e.setLabel('bottom', 'Distance', units='m')
-        plot_e.addLegend()
+        plot_e = pg.PlotWidget()
+        self._style_plot(plot_e, "Cumulative Energy (Discharge only)", "Energy Out", "kWh")
+        legend_e = plot_e.addLegend(offset=(20, 20), pen=pg.mkPen('#e2e8f0'), brush=pg.mkBrush('#ffffffEE'))
+        legend_e.setLabelTextColor('#0f172a')
         
-        # Sim Energy
-        # Používáme self.res.s, což má délku N+1, stejně jako e_cum_sim
-        plot_e.plot(self.res.s, e_cum_sim, pen=pg.mkPen('orange', width=2), name="Sim")
+        e_curve = plot_e.plot(self.res.s, e_cum_sim, pen=pg.mkPen(self.C_ENERGY, width=3), name="Sim")
         
-        # Real Energy
+        # Výplň energie
+        dummy_zero = pg.PlotCurveItem(self.res.s, np.zeros_like(self.res.s), pen=None)
+        fill_color = pg.mkColor(self.C_ENERGY)
+        fill_color.setAlpha(30)
+        plot_e.addItem(pg.FillBetweenItem(e_curve, dummy_zero, brush=fill_color))
+        
         if e_cum_real is not None:
-            plot_e.plot(val_data['s'], e_cum_real, pen=pg.mkPen('k', width=2, style=Qt.PenStyle.DotLine), name="Real discharge")
+            plot_e.plot(val_data['s'], e_cum_real, pen=pg.mkPen(self.C_REF, width=2, style=Qt.PenStyle.DashLine), name="Real discharge")
         
         plot_e.setXLink(plot_p)
         
@@ -6398,16 +6557,15 @@ class ResultsWindow(QWidget):
     def init_forces_tab(self):
         widget = QWidget()
         layout = QVBoxLayout()
+        layout.setContentsMargins(15, 15, 15, 15)
         
-        plot_f = pg.PlotWidget(title="Longitudinal Forces")
-        plot_f.setLabel('left', 'Force', units='N')
-        plot_f.setLabel('bottom', 'Distance', units='m')
-        plot_f.showGrid(x=True, y=True)
+        plot_f = pg.PlotWidget()
+        self._style_plot(plot_f, "Longitudinal Forces", "Force", "N")
+        legend_f = plot_f.addLegend(offset=(20, 20), pen=pg.mkPen('#e2e8f0'), brush=pg.mkBrush('#ffffffEE'))
+        legend_f.setLabelTextColor('#0f172a')
         
-        plot_f.plot(self.res.s[:-1], self.res.f_acc, pen='g', name="Traction")
-        plot_f.plot(self.res.s[:-1], self.res.f_brake, pen='r', name="Braking")
-        
-        plot_f.addLegend()
+        plot_f.plot(self.res.s[:-1], self.res.f_acc, pen=pg.mkPen(self.C_ACC, width=2.5), name="Traction")
+        plot_f.plot(self.res.s[:-1], self.res.f_brake, pen=pg.mkPen(self.C_BRK, width=2.5), name="Braking")
         
         layout.addWidget(plot_f)
         widget.setLayout(layout)
@@ -6416,155 +6574,99 @@ class ResultsWindow(QWidget):
     def init_map_tab(self):
         widget = QWidget()
         layout = QVBoxLayout()
+        layout.setContentsMargins(20, 20, 20, 20)
 
-        # Vytvoříme PlotWidget
-        self.map_plot = pg.PlotWidget(title="Power map")
+        # Kontejner s bílým pozadím a zaoblením
+        canvas_container = QWidget()
+        canvas_container.setStyleSheet("background: #ffffff; border: 1px solid #e2e8f0; border-radius: 8px;")
+        canvas_layout = QVBoxLayout(canvas_container)
+        canvas_layout.setContentsMargins(5, 5, 5, 5)
+
+        self.map_plot = pg.PlotWidget(title="Power Map")
+        self.map_plot.setBackground('#ffffff')
+        self.map_plot.setTitle("Power Map", color='#0f172a', size='12pt', bold=True)
         self.map_plot.setAspectLocked(True)
-        self.map_plot.setLabel('bottom', 'X Position', units='m')
-        self.map_plot.setLabel('left', 'Y Position', units='m')
+        
+        # Čistá mapa - skrytí os
+        self.map_plot.hideAxis('bottom')
+        self.map_plot.hideAxis('left')
 
-
-        # --- 1. DATA PREP ---
         s_sim = self.res.s
-        # Interpolace souřadnic
-        x_plot = np.interp(s_sim, self.track.s, self.track.x)
-        y_plot = np.interp(s_sim, self.track.s, self.track.y)   
+        x_plot = np.interp(s_sim, self.track.s, self.track.x)[:-1]
+        y_plot = np.interp(s_sim, self.track.s, self.track.y)[:-1]
 
-        # Výpočet výkonu
-        # Zkrátíme o 1 index, aby seděly délky (v_avg je pro intervaly)
         v_avg = self.res.v[:-1]
-        f_acc = self.res.f_acc
-        f_brake = self.res.f_brake
+        power_kw = ((self.res.f_acc + self.res.f_brake) * v_avg) / 1000.0
         
-        # Power [kW]
-        power_kw = ((f_acc + f_brake) * v_avg) / 1000.0
-        
-        # X a Y zkrátíme, aby seděly k Power vektoru
-        x_plot = x_plot[:-1]
-        y_plot = y_plot[:-1]
-        
-        # Uložíme data do self, abychom k nim mohli v 'mouse_moved'
-        self.map_data = {
-            'x': x_plot,
-            'y': y_plot,
-            'p': power_kw,
-            'v': v_avg * 3.6, # km/h
-            's': s_sim[:-1]
-        }
+        self.map_data = {'x': x_plot, 'y': y_plot, 'p': power_kw, 'v': v_avg * 3.6, 's': s_sim[:-1]}
 
-        
         p_min = np.min(power_kw)
         p_max = np.max(power_kw)
         span = p_max - p_min + 1e-9 
-        
-       
-        zero_pos = (0 - p_min) / span
-        zero_pos = np.clip(zero_pos, 0.0, 1.0) # Omezit na 0-1
+        zero_pos = np.clip((0 - p_min) / span, 0.0, 1.0) 
 
-     
         pos = np.array([0.0, zero_pos, 1.0])
         color_def = np.array([
-            [255, 0, 0, 255],     # Red (Max Regen)
-            [0, 150, 255, 255], # Grey/Yellow (0 kW)
-            [0, 255, 0, 255]      # Green (Max Power)
+            [239, 68, 68, 255],    # Red (Braking/Regen)
+            [226, 232, 240, 255],  # Light Gray (0 kW)
+            [16, 185, 129, 255]    # Green (Power)
         ], dtype=np.ubyte)
         
-        # Vytvoříme ColorMap objekt
         cmap = pg.ColorMap(pos, color_def)
-        
-        # Získáme barvy pro všechny body najednou (LUT lookup)
-        # Nejprve normalizujeme power na 0..1
-        norm_power = (power_kw - p_min) / span
-        brushes = cmap.map(norm_power, mode='qcolor') # Vrátí pole QColor
+        brushes = cmap.map((power_kw - p_min) / span, mode='qcolor') 
 
-     
-        self.scatter = pg.ScatterPlotItem(
-            x=x_plot, 
-            y=y_plot, 
-            size=6,           # Velikost bodu 
-            pen=None,         # Bez obrysu
-            brush=brushes,    # Naše barvy
-            hoverable=True,
-            hoverSize=10      # Zvětší se při najetí myší
-        )
+        self.scatter = pg.ScatterPlotItem(x=x_plot, y=y_plot, size=8, pen=None, brush=brushes, hoverable=True, hoverSize=12)
         self.map_plot.addItem(self.scatter)
         
-        # Start marker
-        start_marker = pg.ScatterPlotItem(x=[x_plot[0]], y=[y_plot[0]], size=15, symbol='o', brush='w')
+        start_marker = pg.ScatterPlotItem(x=[x_plot[0]], y=[y_plot[0]], size=15, symbol='o', brush='#0f172a')
         self.map_plot.addItem(start_marker)
 
- 
-        self.legend = pg.GradientLegend((20, 150), (10, 10)) # Velikost, Offset
+        self.legend = pg.GradientLegend((20, 150), (10, 10)) 
         self.legend.setGradient(cmap.getGradient())
-        # Nastavíme popisky (Min, 0, Max)
-        labels = {
-            f"{p_min:.0f} kW": 0,
-            "0 kW": zero_pos,
-            f"{p_max:.0f} kW": 1
-        }
-        self.legend.setLabels(labels)
+        self.legend.setLabels({f"{p_min:.0f} kW": 0, "0 kW": zero_pos, f"{p_max:.0f} kW": 1})
+        self.legend.labelStyle = {'color': '#334155', 'font-size': '10pt'} # Tmavý text
         self.map_plot.addItem(self.legend)
 
-        # --- 5. INTERAKCE (CROSSHAIR & LABEL) ---
-        # Přidáme label, který bude ukazovat hodnoty
-        self.cursor_label = pg.TextItem(anchor=(0, 1), color="w") # Anchor vlevo dole
+        self.cursor_label = pg.TextItem(anchor=(0, 1), color="#334155") 
         self.map_plot.addItem(self.cursor_label)
         
-        # Crosshair (zaměřovač)
-        self.v_line = pg.InfiniteLine(angle=90, movable=False, pen=pg.mkPen('w', style=Qt.PenStyle.DashLine))
-        self.h_line = pg.InfiniteLine(angle=0, movable=False, pen=pg.mkPen('w', style=Qt.PenStyle.DashLine))
+        self.v_line = pg.InfiniteLine(angle=90, movable=False, pen=pg.mkPen('#94a3b8', style=Qt.PenStyle.DashLine))
+        self.h_line = pg.InfiniteLine(angle=0, movable=False, pen=pg.mkPen('#94a3b8', style=Qt.PenStyle.DashLine))
         self.map_plot.addItem(self.v_line)
         self.map_plot.addItem(self.h_line)
         
-        # Propojíme pohyb myši s funkcí
         self.map_plot.scene().sigMouseMoved.connect(self.on_map_mouse_move)
 
-        layout.addWidget(self.map_plot)
+        canvas_layout.addWidget(self.map_plot)
+        layout.addWidget(canvas_container)
         widget.setLayout(layout)
         self.tabs.addTab(widget, "Power Map")
 
     def on_map_mouse_move(self, pos):
-        """Obsluha pohybu myši nad grafem - hledá nejbližší bod na trati."""
         if self.map_plot.sceneBoundingRect().contains(pos):
             mouse_point = self.map_plot.plotItem.vb.mapSceneToView(pos)
             mx, my = mouse_point.x(), mouse_point.y()
             
-            # Najdeme nejbližší bod v datech
-            # Vypočteme vzdálenost myši od všech bodů tratě (vektorově - velmi rychlé)
             dists = np.sqrt((self.map_data['x'] - mx)**2 + (self.map_data['y'] - my)**2)
-            idx = np.argmin(dists) # Index nejbližšího bodu
+            idx = np.argmin(dists) 
             
-            # Pokud jsme blízko trati (např. do 20 metrů), zobrazíme info
             if dists[idx] < 20.0:
-                x_track = self.map_data['x'][idx]
-                y_track = self.map_data['y'][idx]
                 p_val = self.map_data['p'][idx]
-                v_val = self.map_data['v'][idx]
-                s_val = self.map_data['s'][idx]
-                
-                # Posuneme Crosshair na bod tratě
-                self.v_line.setPos(x_track)
-                self.h_line.setPos(y_track)
-                
-                # Barva textu podle výkonu
-                color_hex = "#00ff00" if p_val > 0 else "#ff5555" if p_val < 0 else "#ffffff"
-                
-                # Text Labelu
                 html_text = (
-                    f"<div style='background-color: rgba(0,0,0,150); padding: 5px; font-size: 14px;'>"
-                    f"<b style='color: white;'>Dist: {s_val:.1f} m</b><br>"
-                    f"Speed: {v_val:.1f} km/h<br>"
-                    f"Power: <b style='color: {color_hex};'>{p_val:.1f} kW</b>"
+                    f"<div style='background-color: rgba(255,255,255,220); border: 1px solid #cbd5e1; padding: 8px; border-radius: 4px; font-family: Segoe UI;'>"
+                    f"<b>Dist:</b> {self.map_data['s'][idx]:.1f} m<br>"
+                    f"<b>Speed:</b> {self.map_data['v'][idx]:.1f} km/h<br>"
+                    f"<b>Power:</b> <span style='color: {'#10b981' if p_val > 0 else '#ef4444'};'>{p_val:.1f} kW</span>"
                     f"</div>"
                 )
-                
                 self.cursor_label.setHtml(html_text)
-                self.cursor_label.setPos(x_track, y_track)
+                self.cursor_label.setPos(self.map_data['x'][idx], self.map_data['y'][idx])
                 self.cursor_label.setVisible(True)
+                self.v_line.setPos(self.map_data['x'][idx])
+                self.h_line.setPos(self.map_data['y'][idx])
                 self.v_line.setVisible(True)
                 self.h_line.setVisible(True)
             else:
-                # Jsme moc daleko od tratě
                 self.cursor_label.setVisible(False)
                 self.v_line.setVisible(False)
                 self.h_line.setVisible(False)
@@ -6572,8 +6674,8 @@ class ResultsWindow(QWidget):
     def init_sensitivity_tab(self):
         widget = QWidget()
         main_layout = QVBoxLayout()
+        main_layout.setContentsMargins(15, 15, 15, 15)
         
-       
         if not self.res.sens:
             main_layout.addWidget(QLabel("No sensitivity data available."))
             widget.setLayout(main_layout)
@@ -6581,89 +6683,78 @@ class ResultsWindow(QWidget):
             return
 
         raw = self.res.sens
-        
         self.scenario_data = {
-            'Mass (m)': {
-                'val': self.car.mass, 
-                'sens': raw.get('dTime_dm', 0.0), 
-                'unit': 'kg'
-            },
-            'Drag (Cd)': {
-                'val': self.car.cd,
-                'sens': raw.get('dTime_dCdA', 0.0), 
-                'unit': '-'
-            },
-            'Downforce (Cl)': {
-                'val': self.car.cl,
-                'sens': raw.get('dTime_dCL', 0.0), 
-                'unit': '-'
-            }
+            'Weight (m)': {'val': self.car.weight, 'sens': raw.get('dTime_dm', 0.0), 'unit': 'kg'},
+            'Drag (Cd)': {'val': self.car.cd, 'sens': raw.get('dTime_dCdA', 0.0), 'unit': '-'},
+            'Downforce (Cl)': {'val': self.car.cl, 'sens': raw.get('dTime_dCL', 0.0), 'unit': '-'}
         }
 
-        # 2. control panel
-        control_group = QGroupBox("Scenario Configuration (Multi-Parametric Analysis)")
+        control_group = QGroupBox("Scenario Configuration)")
+        
+        control_group.setObjectName("HighlightedGroup")
+        
+
         grid = QGridLayout()
         grid.setSpacing(15) 
         
-        # Hlavičky tabulky
-        grid.addWidget(QLabel("<b>Parameter</b>"), 0, 0)
-        grid.addWidget(QLabel("<b>Base Value</b>"), 0, 1)
-        grid.addWidget(QLabel("<b>Change (%)</b>"), 0, 2)
-        grid.addWidget(QLabel("<b>Delta Time</b>"), 0, 3) 
+        # Hlavičky s průhledným pozadím
+        def create_header(text):
+            lbl = QLabel(f"<b>{text}</b>")
+            lbl.setStyleSheet("background-color: transparent; color: #334155;")
+            return lbl
 
-        self.inputs = {}        # reference na spinboxy
-        self.deltas_labels = {} # reference na labely s výsledky
+        grid.addWidget(create_header("Parameter"), 0, 0)
+        grid.addWidget(create_header("Base Value"), 0, 1)
+        grid.addWidget(create_header("Change (%)"), 0, 2)
+        grid.addWidget(create_header("Delta Time"), 0, 3) 
+
+        self.inputs = {} 
+        self.deltas_labels = {}
 
         row = 1
         for name, data in self.scenario_data.items():
-            # A) name of parameter
             lbl_name = QLabel(name)
-            lbl_name.setStyleSheet("font-size: 14px;")
+            lbl_name.setStyleSheet("background-color: transparent; color: #334155; font-weight: bold;")
             
-            # B) value
             lbl_val = QLabel(f"{data['val']:.3f} {data['unit']}")
-            lbl_val.setStyleSheet("color: #666; font-family: Consolas;")
+            lbl_val.setStyleSheet("background-color: transparent; color: #64748b; font-family: Consolas;")
             
-            # C) Input SpinBox (%)
             spin = QDoubleSpinBox()
             spin.setRange(-50.0, 50.0)
             spin.setValue(0.0)
-            spin.setSuffix("%")
+            spin.setSuffix(" %")
             spin.setSingleStep(0.5)
-            spin.setFixedWidth(100)
-            spin.valueChanged.connect(self.update_scenario) # Live update
-            
+            spin.setFixedWidth(120)
+            spin.valueChanged.connect(self.update_scenario) 
             self.inputs[name] = spin
             
-            # D) Delta Label 
             lbl_delta = QLabel("0.000 s")
             lbl_delta.setAlignment(Qt.AlignmentFlag.AlignRight)
-            lbl_delta.setStyleSheet("font-family: Consolas; font-weight: bold;")
+            lbl_delta.setStyleSheet("background-color: transparent; font-family: Consolas; font-weight: bold; color: #475569;")
             self.deltas_labels[name] = lbl_delta
 
-            # grid import
             grid.addWidget(lbl_name, row, 0)
             grid.addWidget(lbl_val, row, 1)
             grid.addWidget(spin, row, 2)
             grid.addWidget(lbl_delta, row, 3)
             row += 1
 
-        # Reset button
-        btn_reset = QPushButton("Reset All to 0%")
+        btn_reset = QPushButton("Reset All")
+        btn_reset.setStyleSheet("background-color: #64748b; color: white;")
         btn_reset.clicked.connect(self.reset_scenario)
         grid.addWidget(btn_reset, row, 2, 1, 2)
 
         control_group.setLayout(grid)
         main_layout.addWidget(control_group)
 
-        # 3. results panel
         self.lbl_scenario_results = QLabel()
         self.lbl_scenario_results.setTextFormat(Qt.TextFormat.RichText)
         self.lbl_scenario_results.setStyleSheet("""
-            background-color: #f8f9fa; 
-            border: 1px solid #ddd; 
-            border-radius: 5px;
-            padding: 20px; 
+            background-color: #f1f5f9; 
+            border: 1px solid #cbd5e1; 
+            border-radius: 8px;
+            padding: 30px; 
+            margin-top: 15px;
         """)
         self.lbl_scenario_results.setAlignment(Qt.AlignmentFlag.AlignCenter)
         
@@ -6672,13 +6763,9 @@ class ResultsWindow(QWidget):
         
         widget.setLayout(main_layout)
         self.tabs.addTab(widget, "Sensitivity")
-        
-  
         self.update_scenario()
 
-
     def reset_scenario(self):
-        """resets all spinboxs to 0"""
         for spin in self.inputs.values():
             spin.blockSignals(True) 
             spin.setValue(0.0)
@@ -6686,145 +6773,107 @@ class ResultsWindow(QWidget):
         self.update_scenario()
 
     def update_scenario(self):
-        
         total_dt = 0.0
         
-        # iteration over parameters
         for name, spin in self.inputs.items():
             pct = spin.value()
             data = self.scenario_data[name]
-            
-            # change
-            # Delta Param = Base * (Pct / 100)
             d_param = data['val'] * (pct / 100.0)
-            
-            # Delta Time = Sens * Delta Param
             d_time = data['sens'] * d_param
-            
             total_dt += d_time
             
-            # color gang
-            color = "#28a745" if d_time < 0 else "#dc3545" if d_time > 0 else "#888"
+            color = "#10b981" if d_time < 0 else "#ef4444" if d_time > 0 else "#94a3b8"
             sign = "+" if d_time > 0 else ""
-            self.deltas_labels[name].setText(f"<span style='color:{color}'>{sign}{d_time:.4f} s</span>")
+            self.deltas_labels[name].setText(f"<span style='color:{color}; background-color: transparent;'>{sign}{d_time:.4f} s</span>")
 
-        # overal sum
         base_time = self.res.lap_time
         new_time = base_time + total_dt
         
-        # color
-        diff_color = "#28a745" if total_dt < 0 else "#dc3545" if total_dt > 0 else "#333"
+        diff_color = "#10b981" if total_dt < 0 else "#ef4444" if total_dt > 0 else "#475569"
         diff_sign = "+" if total_dt > 0 else ""
 
-        # 3. HTML 
         html = f"""
-        <div style='text-align: center; font-family: sans-serif;'>
-            <h3 style='margin-bottom: 5px; color: #666; text-transform: uppercase; letter-spacing: 1px;'>Predicted Lap Time</h3>
-            
-            <div style='font-size: 48px; font-weight: bold; color: {diff_color}; margin: 10px 0;'>
+        <div style='text-align: center;'>
+            <div style='color: #64748b; font-size: 14px; text-transform: uppercase; font-weight: bold;'>Predicted Lap Time</div>
+            <div style='font-size: 56px; font-weight: bold; color: {diff_color}; margin: 15px 0;'>
                 {new_time:.3f} s
             </div>
-            
-            <div style='font-size: 20px; color: {diff_color}; font-weight: bold;'>
+            <div style='font-size: 24px; color: {diff_color}; font-weight: bold;'>
                 ({diff_sign}{total_dt:.3f} s)
             </div>
-            
-            <div style='margin-top: 15px; font-size: 14px; color: #999; border-top: 1px solid #eee; padding-top: 10px; display: inline-block;'>
+            <div style='margin-top: 25px; font-size: 15px; color: #64748b; border-top: 1px solid #cbd5e1; padding-top: 15px;'>
                 Baseline: {base_time:.3f} s
             </div>
         </div>
         """
-        
         self.lbl_scenario_results.setText(html)
 
     def init_drs_map_tab(self):
-        
         widget = QWidget()
         layout = QVBoxLayout()
+        layout.setContentsMargins(20, 20, 20, 20)
+
+        canvas_container = QWidget()
+        canvas_container.setStyleSheet("background: #ffffff; border: 1px solid #e2e8f0; border-radius: 8px;")
+        canvas_layout = QVBoxLayout(canvas_container)
+        canvas_layout.setContentsMargins(5, 5, 5, 5)
 
         self.drs_plot = pg.PlotWidget(title="DRS Usage Map")
+        self.drs_plot.setBackground('#ffffff')
+        self.drs_plot.setTitle("DRS Usage Map", color='#0f172a', size='12pt', bold=True)
         self.drs_plot.setAspectLocked(True)
-        self.drs_plot.setLabel('bottom', 'X Position', units='m')
-        self.drs_plot.setLabel('left', 'Y Position', units='m')
+        self.drs_plot.hideAxis('bottom')
+        self.drs_plot.hideAxis('left')
 
-        # --- DATA PREP ---
-        # DRS usage je pole 0..1
-        drs_data = self.res.drs_usage
-        
-        # Interpolace souřadnic na délku DRS pole (které má délku N)
-        # res.s má délku N+1, takže použijeme s[:-1]
         s_sim = self.res.s[:-1]
-        
         x_plot = np.interp(s_sim, self.track.s, self.track.x)
         y_plot = np.interp(s_sim, self.track.s, self.track.y) 
 
-        # --- COLOR MAPPING ---
-        # 0.0 (Closed) -> Red
-        # 1.0 (Open)   -> Green
-        # Mezi tím -> Interpolace
-        
         pos = np.array([0.0, 1.0])
         color_def = np.array([
-            [255, 0, 0, 255],   # Red (Closed)
-            [0, 255, 0, 255]    # Green (Open)
+            [239, 68, 68, 255],   # Red (Closed)
+            [16, 185, 129, 255]   # Green (Open)
         ], dtype=np.ubyte)
         
         cmap = pg.ColorMap(pos, color_def)
-        
-        # Obarvení bodů
-        brushes = cmap.map(drs_data, mode='qcolor')
+        brushes = cmap.map(self.res.drs_usage, mode='qcolor')
 
-        # --- SCATTER PLOT ---
-        self.drs_scatter = pg.ScatterPlotItem(
-            x=x_plot, 
-            y=y_plot, 
-            size=6, 
-            pen=None, 
-            brush=brushes,
-            hoverable=True,
-            hoverSize=10
-        )
+        self.drs_scatter = pg.ScatterPlotItem(x=x_plot, y=y_plot, size=8, pen=None, brush=brushes, hoverable=True, hoverSize=12)
         self.drs_plot.addItem(self.drs_scatter)
-        
-        # Start/Finish line marker
-        self.drs_plot.plot([x_plot[0]], [y_plot[0]], symbol='o', symbolBrush='w', symbolSize=10)
+        self.drs_plot.plot([x_plot[0]], [y_plot[0]], symbol='o', symbolBrush='#0f172a', symbolSize=15)
 
-        # --- LEGEND ---
         legend = pg.GradientLegend((20, 100), (10, 10))
         legend.setGradient(cmap.getGradient())
         legend.setLabels({"Closed": 0, "Open": 1})
+        legend.labelStyle = {'color': '#334155', 'font-size': '10pt'}
         self.drs_plot.addItem(legend)
 
-        layout.addWidget(self.drs_plot)
+        canvas_layout.addWidget(self.drs_plot)
+        layout.addWidget(canvas_container)
         widget.setLayout(layout)
         self.tabs.addTab(widget, "DRS Map")
 
     def init_soc_tab(self):
-        """Initializes the State of Charge (SoC) tab if data is available."""
-        # Check if soc exists and is not None
-        if self.res.SoC is None:
-            return
+        if self.res.SoC is None: return
 
         widget = QWidget()
         layout = QVBoxLayout()
+        layout.setContentsMargins(15, 15, 15, 15)
         
-        # Create PlotWidget
-        plot_soc = pg.PlotWidget(title="State of charge (SoC)")
-        plot_soc.setLabel('left', 'SoC', units='%')
-        plot_soc.setLabel('bottom', 'Distance', units='m')
-        plot_soc.showGrid(x=True, y=True)
+        plot_soc = pg.PlotWidget()
+        self._style_plot(plot_soc, "Battery State of Charge", "SoC", "%")
         
-        # Ensure lengths match (s is usually N+1, soc might be N or N+1)
         s_plot = self.res.s[:len(self.res.SoC)]
+        soc_curve = plot_soc.plot(s_plot, self.res.SoC, pen=pg.mkPen(self.C_SIM, width=3), name="SoC")
         
-        # Plot the data
-        plot_soc.plot(s_plot, self.res.SoC, pen=pg.mkPen('b', width=2), name="SoC")
+        dummy_zero = pg.PlotCurveItem(s_plot, np.zeros_like(s_plot), pen=None)
+        fill_color = pg.mkColor(self.C_SIM)
+        fill_color.setAlpha(30)
+        plot_soc.addItem(pg.FillBetweenItem(soc_curve, dummy_zero, brush=fill_color))
         
         layout.addWidget(plot_soc)
         widget.setLayout(layout)
-        
         self.tabs.addTab(widget, "Battery")
-
 --- KONEC SOUBORU: src\ui\results_window.py ---
 
 --- ZAČÁTEK SOUBORU: src\ui\sensitivity_plot.py ---
@@ -7265,6 +7314,272 @@ class LaptimeSensitivityPlot(QWidget):
         
         return plot_widget
 --- KONEC SOUBORU: src\ui\sensitivity_plot.py ---
+
+--- ZAČÁTEK SOUBORU: src\ui\style_manager.py ---
+import os
+
+class StyleManager:
+    @staticmethod
+    def get_global_stylesheet():
+        # 1. Vygenerování fyzických ikon
+        os.makedirs("data/icons", exist_ok=True)
+        
+        down_svg = "<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='#334155' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>"
+        up_svg = "<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='#334155' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polyline points='18 15 12 9 6 15'/></svg>"
+        
+        with open("data/icons/down_arrow.svg", "w", encoding="utf-8") as f:
+            f.write(down_svg)
+        with open("data/icons/up_arrow.svg", "w", encoding="utf-8") as f:
+            f.write(up_svg)
+
+        # 2. Centrální QSS
+        return """
+            /* --- ZÁKLADNÍ OKNA A TEXTY --- */
+            QMainWindow, QDialog {
+                background-color: #f8f9fa; /* Změněno na čistší světlou z ResultsWindow */
+                font-family: 'Segoe UI', system-ui, sans-serif;
+                color: #334155;
+            }
+            QLabel {
+                color: #1e293b;
+                font-size: 10pt;
+                font-weight: 500;
+            }
+            
+            /* --- ZÁLOŽKY (TABS) --- */
+            QTabWidget::pane {
+                border: 1px solid #e2e8f0;
+                background-color: #ffffff;
+                border-radius: 8px;
+                margin-top: -1px; 
+            }
+            QTabBar::tab {
+                background-color: #e2e8f0;
+                color: #64748b;
+                border: 1px solid #cbd5e1;
+                border-bottom: none; 
+                border-top-left-radius: 6px;
+                border-top-right-radius: 6px;
+                padding: 10px 20px;
+                margin-right: 4px;
+                font-weight: bold;
+            }
+            QTabBar::tab:selected {
+                background-color: #ffffff;
+                color: #0f172a;
+                border-top: 3px solid #3b82f6;
+            }
+            QTabBar::tab:hover:!selected {
+                background-color: #cbd5e1;
+                color: #0f172a;
+            }
+
+            /* --- KONTEJNERY A BOXY --- */
+            QGroupBox {
+                background-color: #ffffff;
+                border: 1px solid #e2e8f0;
+                border-radius: 8px;
+                margin-top: 15px; 
+                padding-top: 10px;
+                font-weight: 600;
+                font-size: 11pt;
+                color: #334155;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                subcontrol-position: top left;
+                padding: 0 5px;
+                left: 10px;
+                color: #64748b;
+            }
+            
+            /* Speciální šedý GroupBox z ResultsWindow */
+            QGroupBox#HighlightedGroup {
+                background-color: #f1f5f9; 
+                border: 1px solid #cbd5e1;
+            }
+            QGroupBox#HighlightedGroup::title {
+                color: #334155;
+            }
+
+            QWidget#CanvasContainer {
+                background-color: #ffffff;
+                border: 1px solid #e2e8f0;
+                border-radius: 8px;
+            }
+
+            /* --- VSTUPY A COMBOBOXY --- */
+            QComboBox, QDoubleSpinBox, QLineEdit {
+                background-color: #ffffff;
+                border: 1px solid #cbd5e1;
+                border-radius: 5px;
+                padding: 5px 10px;
+                min-height: 22px;
+                font-size: 10pt;
+                color: #0f172a;
+            }
+            QComboBox:hover, QDoubleSpinBox:hover, QLineEdit:hover {
+                border: 1px solid #94a3b8;
+            }
+            QLineEdit:focus {
+                border: 1px solid #3b82f6;
+            }
+            
+            QComboBox QAbstractItemView {
+                background-color: #ffffff;
+                color: #0f172a;
+                selection-background-color: #e2e8f0;
+                selection-color: #0f172a;
+                border: 1px solid #cbd5e1;
+                outline: none;
+            }
+            QComboBox::drop-down {
+                border-left: 1px solid #cbd5e1;
+                width: 24px;
+                border-top-right-radius: 5px;
+                border-bottom-right-radius: 5px;
+                background: #f1f5f9;
+            }
+            QComboBox::down-arrow {
+                image: url("data/icons/down_arrow.svg");
+                width: 14px;
+                height: 14px;
+            }
+            
+            QDoubleSpinBox::up-button, QDoubleSpinBox::down-button {
+                background-color: #f1f5f9; 
+                border-left: 1px solid #cbd5e1; 
+                width: 24px; 
+            }
+            QDoubleSpinBox::up-button { border-top-right-radius: 4px; }
+            QDoubleSpinBox::down-button {
+                border-bottom-right-radius: 4px;
+                border-top: 1px solid #cbd5e1;
+            }
+            QDoubleSpinBox::up-button:hover, QDoubleSpinBox::down-button:hover { background-color: #e2e8f0; }
+            QDoubleSpinBox::up-button:pressed, QDoubleSpinBox::down-button:pressed { background-color: #cbd5e1; }
+            QDoubleSpinBox::up-arrow { image: url("data/icons/up_arrow.svg"); width: 12px; height: 12px; }
+            QDoubleSpinBox::down-arrow { image: url("data/icons/down_arrow.svg"); width: 12px; height: 12px; }
+
+            /* --- CHECKBOXY --- */
+            QCheckBox { font-size: 10pt; color: #334155; spacing: 8px; }
+            QCheckBox::indicator { width: 18px; height: 18px; border-radius: 4px; border: 1px solid #cbd5e1; background-color: #f8fafc; }
+            QCheckBox::indicator:hover { border-color: #94a3b8; }
+            QCheckBox::indicator:checked { background-color: #3b82f6; border-color: #3b82f6; }
+
+            /* --- OBECNÁ TLAČÍTKA --- */
+            QPushButton {
+                font-family: 'Segoe UI', system-ui, sans-serif;
+                font-size: 10pt;
+                font-weight: 600;
+                border-radius: 6px;
+                padding: 10px 15px;
+                border: none;
+                color: white;
+                background-color: #64748b; 
+            }
+            QPushButton:hover { background-color: #475569; }
+            QPushButton:disabled { background-color: #cbd5e1; color: #94a3b8; }
+
+            /* Specifická tlačítka podle ID */
+            QPushButton#BtnConfig { background-color: #475569; }
+            QPushButton#BtnConfig:hover { background-color: #334155; }
+            QPushButton#BtnCreateTrack { background-color: #8b5cf6; }
+            QPushButton#BtnCreateTrack:hover { background-color: #7c3aed; }
+            QPushButton#BtnCompare { background-color: #3b82f6; }
+            QPushButton#BtnCompare:hover { background-color: #2563eb; }
+            QPushButton#BtnRunSingle { background-color: #10b981; }
+            QPushButton#BtnRunSingle:hover { background-color: #059669; }
+            QPushButton#BtnEndurance { background-color: #06b6d4; }
+            QPushButton#BtnEndurance:hover { background-color: #0891b2; }
+            QPushButton#BtnLapMap { background-color: #64748b; }
+            QPushButton#BtnLapMap:hover { background-color: #475569; }
+            
+            QPushButton#BtnTool {
+                background-color: #e2e8f0;
+                color: #334155;
+                font-weight: bold;
+                font-size: 14pt;
+                border-radius: 5px;
+                border: 1px solid #cbd5e1;
+                padding: 5px;
+            }
+            QPushButton#BtnTool:hover { background-color: #cbd5e1; }
+
+            /* --- DIALOGY A SCROLLBARY --- */
+            QMessageBox, QInputDialog { background-color: #f1f5f9; }
+            QMessageBox QLabel, QInputDialog QLabel { color: #1e293b; background-color: transparent; }
+            QDialogButtonBox QPushButton { background-color: #3b82f6; min-width: 80px; padding: 6px 16px; }
+            QDialogButtonBox QPushButton:hover { background-color: #2563eb; }
+
+            QScrollArea#LeftScrollArea { background-color: transparent; border: none; }
+            QWidget#ControlPanel { background-color: transparent; }
+            
+            QScrollBar:vertical { border: none; background-color: #f1f5f9; width: 8px; border-radius: 4px; margin: 0px; }
+            QScrollBar::handle:vertical { background-color: #cbd5e1; min-height: 30px; border-radius: 4px; }
+            QScrollBar::handle:vertical:hover { background-color: #94a3b8; }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical, QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { border: none; background: none; }
+            QSplitter::handle { background-color: transparent; }
+
+            /* Vynutí, aby samotný obsah záložky byl vždy čistě bílý */
+            QTabWidget > QWidget {
+                background-color: #ffffff;
+            }
+
+            /* --- MODERNÍ SLIDERY (POSUVNÍKY) --- */
+            /* Horizontální slider */
+            QSlider::groove:horizontal {
+                border: 1px solid #cbd5e1;
+                height: 6px;
+                background: #e2e8f0;
+                border-radius: 3px;
+                margin: 2px 0;
+            }
+            QSlider::sub-page:horizontal {
+                background: #3b82f6; /* Modrá výplň zleva po držátko */
+                border-radius: 3px;
+                height: 6px;
+            }
+            QSlider::handle:horizontal {
+                background: #ffffff;
+                border: 2px solid #3b82f6; /* Bílé kolečko s modrým okrajem */
+                width: 16px;
+                height: 16px;
+                margin: -6px 0; /* Vycentrování na střed drážky */
+                border-radius: 8px;
+            }
+            QSlider::handle:horizontal:hover {
+                background: #eff6ff;
+                border: 2px solid #2563eb;
+            }
+
+            /* Vertikální slider */
+            QSlider::groove:vertical {
+                border: 1px solid #cbd5e1;
+                width: 6px;
+                background: #e2e8f0;
+                border-radius: 3px;
+                margin: 0 2px;
+            }
+            QSlider::add-page:vertical {
+                background: #3b82f6; /* Modrá výplň zdola po držátko */
+                border-radius: 3px;
+                width: 6px;
+            }
+            QSlider::handle:vertical {
+                background: #ffffff;
+                border: 2px solid #3b82f6;
+                height: 16px;
+                width: 16px;
+                margin: 0 -6px; /* Vycentrování na střed drážky */
+                border-radius: 8px;
+            }
+            QSlider::handle:vertical:hover {
+                background: #eff6ff;
+                border: 2px solid #2563eb;
+            }
+        """
+--- KONEC SOUBORU: src\ui\style_manager.py ---
 
 --- ZAČÁTEK SOUBORU: src\ui\__init__.py ---
 

@@ -1,17 +1,17 @@
 {
     "acp_capacity": 6.0,
-    "weight": 280.0,
-    "cd": 1.83,
+    "weight": 270.5,
+    "cd": 2.13,
     "cd_drs": 1.17,
     "cl": 5.64,
     "cl_drs": 4.2,
     "cop": 0.53,
     "power_limit": 80.0,
     "regen_eff": 0.8,
-    "laps": 22,
-    "ds": 1.0,
+    "laps": 18,
+    "ds": 0.95,
     "model_type": "mass_point_rk4",
     "energy_limit": null,
-    "drs_allowed": true,
-    "soc_start": 0.75
+    "drs_allowed": false,
+    "soc_start": 1.0
 }

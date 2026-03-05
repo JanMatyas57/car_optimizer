@@ -227,7 +227,7 @@ class ComparisonPlotWindow(QWidget):
         legend.setLabelTextColor('#0f172a')
         
         plot_e = pg.PlotWidget()
-        self._style_plot(plot_e, "Energy Consumption", "Energy", "kWh")
+        self._style_plot(plot_e, "Energy consumption", "Energy", "kWh")
         plot_e.setXLink(plot_p)
 
         for i, run in enumerate(self.runs):
@@ -245,7 +245,7 @@ class ComparisonPlotWindow(QWidget):
             plot_p.plot(s_axis, pwr, pen=pg.mkPen(color_val, width=width), name=run['name'])
             
             # Energy - výplň pod křivkou pro lepší čitelnost
-            e_curve = plot_e.plot(run['s'], run['E'], pen=pg.mkPen(color_val, width=width), name=run['name'])
+            e_curve = plot_e.plot(run['s'], run['E']-run['E'][0], pen=pg.mkPen(color_val, width=width), name=run['name'])
             
             if run is self.ref_run:
                 dummy_zero = pg.PlotCurveItem(run['s'], np.zeros_like(run['s']), pen=None)

@@ -4,7 +4,7 @@ import numpy as np
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                              QHBoxLayout, QFormLayout, QGroupBox, QComboBox, 
                              QDoubleSpinBox, QPushButton, QSplitter, QCheckBox, 
-                             QFileDialog, QMessageBox, QDialog, QDialogButtonBox, QInputDialog)
+                             QFileDialog, QMessageBox, QDialog, QDialogButtonBox, QInputDialog,QScrollArea)
 from PyQt6.QtCore import Qt, pyqtSignal
 
 # track for rendering
@@ -15,7 +15,7 @@ from src.handlers.requests import SingleLapRequest, EnduranceRequest, LapMapTest
 from src.ui.loader import LoadingOverlay
 from src.utils.config_manager import ConfigManager
 
-from PyQt6.QtGui import QTransform, QColor
+from PyQt6.QtGui import QGuiApplication, QTransform, QColor, QFont
 import matplotlib
 matplotlib.use('QtAgg') 
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
@@ -26,7 +26,10 @@ from matplotlib.colors import Normalize
 class MplCanvas(FigureCanvasQTAgg):
     def __init__(self, parent=None, width=5, height=4, dpi=100):
         self.fig = Figure(figsize=(width, height), dpi=dpi)
+        # Nastavení barvy pozadí grafu, aby ladil s moderním UI
+        self.fig.patch.set_facecolor('#ffffff')
         self.axes = self.fig.add_subplot(111)
+        self.axes.set_facecolor('#ffffff')
         super(MplCanvas, self).__init__(self.fig)
         self.setParent(parent)
         FigureCanvasQTAgg.updateGeometry(self)
@@ -64,23 +67,59 @@ class MainWindow(QMainWindow):
         self.current_vehicle_name = None
 
         self.setWindowTitle("OptiSim")
-        self.resize(1200, 900)
+        
+        # --- DYNAMICKÁ VELIKOST OKNA ---
+        screen = QGuiApplication.primaryScreen()
+        available_geometry = screen.availableGeometry() # Plocha bez Taskbaru!
 
-        # main layout setup
+        screen_width = available_geometry.width()
+        screen_height = available_geometry.height()
+
+        # Chceme 85 % šířky a 90 % výšky obrazovky
+        target_width = int(screen_width * 0.85)
+        target_height = int(screen_height * 0.90)
+
+        # Omezíme to ale rozumným maximem, aby na 2K monitoru nebyla appka zbytečně obří
+        target_width = min(target_width, 1600)
+        target_height = min(target_height, 1200)
+
+        self.resize(target_width, target_height)
+
+        # Pokud je okno po výpočtu pořád moc blízko velikosti samotné obrazovky (malé notebooky),
+        # je lepší ho rovnou spustit maximalizované
+        if target_width >= screen_width * 0.95 or target_height >= screen_height * 0.95:
+            self.showMaximized()
+
+        # --- HLAVNÍ LAYOUT ---
         self.central_widget = QWidget()
+        self.central_widget.setObjectName("CentralWidget")
         self.setCentralWidget(self.central_widget)
         self.main_layout = QHBoxLayout(self.central_widget)
+        self.main_layout.setContentsMargins(15, 15, 15, 15)
+        self.main_layout.setSpacing(15)
 
-        # left control panel 
+        # --- LEVÝ KONTROLNÍ PANEL ---
         self.control_panel = QWidget()
+        self.control_panel.setObjectName("ControlPanel")
         self.control_layout = QVBoxLayout(self.control_panel)
-        self.control_panel.setFixedWidth(320)
+        # Přidáme drobný pravý okraj (10px), aby texty nebyly nalepené přímo na scrollbar
+        self.control_layout.setContentsMargins(0, 0, 10, 0) 
+        self.control_layout.setSpacing(15)
+        
+        # Obalíme náš kontrolní panel do QScrollArea
+        self.left_scroll_area = QScrollArea()
+        self.left_scroll_area.setObjectName("LeftScrollArea")
+        self.left_scroll_area.setWidgetResizable(True) # Důležité: dovolí obsahu se roztáhnout
+        self.left_scroll_area.setFrameShape(QScrollArea.Shape.NoFrame)
+        self.left_scroll_area.setWidget(self.control_panel)
+        # Scroll area bude mírně širší, aby se do ní vlezl panel i scrollbar
+        self.left_scroll_area.setFixedWidth(360) 
         
         self.init_track_section() 
         
         self.btn_config_car = QPushButton("⚙️ Configure car parameters")
+        self.btn_config_car.setObjectName("BtnConfig")
         self.btn_config_car.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_config_car.setStyleSheet("background-color: #343a40; color: white; font-weight: bold; padding: 10px; margin-top: 10px;")
         self.btn_config_car.clicked.connect(self.open_car_config)
         self.control_layout.addWidget(self.btn_config_car)
         
@@ -90,35 +129,45 @@ class MainWindow(QMainWindow):
         self.control_layout.addStretch()
 
         self.btn_create_track = QPushButton("Create track from data")
+        self.btn_create_track.setObjectName("BtnCreateTrack")
         self.btn_create_track.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_create_track.setStyleSheet("""
-            QPushButton { background-color: #6f42c1; color: white; font-weight: bold; padding: 10px; border-radius: 4px; margin-top: 10px; }
-            QPushButton:hover { background-color: #5a32a3; }
-        """)
         self.btn_create_track.clicked.connect(self.on_create_track_clicked)
         self.control_layout.addWidget(self.btn_create_track)
 
         self.btn_compare = QPushButton("Compare logs")
+        self.btn_compare.setObjectName("BtnCompare")
         self.btn_compare.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_compare.setStyleSheet("""
-            QPushButton { background-color: #007bff; color: white; font-weight: bold; padding: 10px; border-radius: 4px; margin-top: 10px; }
-            QPushButton:hover { background-color: #0056b3; }
-        """)
         self.btn_compare.clicked.connect(self.on_compare_clicked)
         self.control_layout.addWidget(self.btn_compare)
 
-        # right panel (graphs)
+        # --- PRAVÝ PANEL (GRAFY) ---
         self.graph_panel = QWidget()
+        self.graph_panel.setObjectName("GraphPanel")
         self.graph_layout = QVBoxLayout(self.graph_panel)
+        self.graph_layout.setContentsMargins(0, 0, 0, 0)
+        
         self.mpl_canvas = MplCanvas(self, width=5, height=4, dpi=100)
-        self.graph_layout.addWidget(self.mpl_canvas)
+        
+        # Obalení plátna do kontejneru pro elegantní stín/rámeček
+        self.canvas_container = QWidget()
+        self.canvas_container.setObjectName("CanvasContainer")
+        canvas_layout = QVBoxLayout(self.canvas_container)
+        canvas_layout.setContentsMargins(10, 10, 10, 10)
+        canvas_layout.addWidget(self.mpl_canvas)
+        
+        self.graph_layout.addWidget(self.canvas_container)
 
+        # --- HLAVNÍ ROZDĚLOVAČ (SPLITTER) ---
         splitter = QSplitter(Qt.Orientation.Horizontal)
-        splitter.addWidget(self.control_panel)
+        splitter.setObjectName("MainSplitter")
+        splitter.setHandleWidth(8)
+        # ZDE PŘIDÁVÁME SCROLL AREA MÍSTO SAMOTNÉHO PANELU
+        splitter.addWidget(self.left_scroll_area) 
         splitter.addWidget(self.graph_panel)
-        splitter.setSizes([320, 880])
+        splitter.setSizes([360, 940])
         self.main_layout.addWidget(splitter)
 
+        # --- LOADER A STYLY ---
         self.loading_overlay = LoadingOverlay(self)
         
         self.controller.simulationStarted.connect(self.loading_overlay.show_loading)
@@ -202,6 +251,8 @@ class MainWindow(QMainWindow):
     def init_track_section(self):
         group = QGroupBox("Track selection")
         layout = QFormLayout()
+        layout.setContentsMargins(15, 25, 15, 15)
+        layout.setSpacing(10)
         self.combo_track = QComboBox()
         self.combo_track.currentIndexChanged.connect(self.on_track_changed) 
         layout.addRow("Track:", self.combo_track)
@@ -211,6 +262,8 @@ class MainWindow(QMainWindow):
     def init_quick_settings(self):
         group = QGroupBox("Simulation settings")
         layout = QFormLayout()
+        layout.setContentsMargins(15, 25, 15, 15)
+        layout.setSpacing(12)
 
         # 1. vehicle model
         self.combo_model = QComboBox()
@@ -221,11 +274,14 @@ class MainWindow(QMainWindow):
         # 2. vehicle profile selector
         veh_layout = QHBoxLayout()
         veh_layout.setContentsMargins(0, 0, 0, 0)
+        veh_layout.setSpacing(8)
         self.combo_vehicle = QComboBox()
         self.combo_vehicle.currentIndexChanged.connect(self.on_vehicle_changed)
         
         self.btn_new_vehicle = QPushButton("+")
-        self.btn_new_vehicle.setFixedWidth(30)
+        self.btn_new_vehicle.setObjectName("BtnTool")
+        self.btn_new_vehicle.setFixedWidth(32)
+        self.btn_new_vehicle.setFixedHeight(32)
         self.btn_new_vehicle.clicked.connect(self.on_new_vehicle_clicked)
         self.btn_new_vehicle.setToolTip("create a new vehicle profile")
         
@@ -283,22 +339,24 @@ class MainWindow(QMainWindow):
     def init_run_buttons(self):
         group = QGroupBox("Run actions")
         layout = QVBoxLayout()
+        layout.setContentsMargins(15, 25, 15, 15)
+        layout.setSpacing(10)
 
         self.btn_run = QPushButton("Run single lap")
+        self.btn_run.setObjectName("BtnRunSingle")
         self.btn_run.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_run.setStyleSheet("background-color: #28a745; color: white; font-weight: bold; padding: 10px; margin-bottom: 5px;")
         self.btn_run.clicked.connect(self.on_run_single_clicked)
         layout.addWidget(self.btn_run)
 
         self.btn_endurance_strategy = QPushButton("Endurance strategy")
+        self.btn_endurance_strategy.setObjectName("BtnEndurance")
         self.btn_endurance_strategy.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_endurance_strategy.setStyleSheet("background-color: #17a2b8; color: white; font-weight: bold; padding: 10px; margin-bottom: 5px; border-radius: 4px;")
         self.btn_endurance_strategy.clicked.connect(self.on_endurance_strategy_clicked)
         layout.addWidget(self.btn_endurance_strategy)
 
         self.btn_acp_test = QPushButton("Generate laptime map")
+        self.btn_acp_test.setObjectName("BtnLapMap")
         self.btn_acp_test.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_acp_test.setStyleSheet("background-color: #6c757d; color: white; padding: 10px; font-weight: bold; border-radius: 4px;")
         self.btn_acp_test.clicked.connect(self.on_lap_map_clicked)
         layout.addWidget(self.btn_acp_test)
 
@@ -379,6 +437,7 @@ class MainWindow(QMainWindow):
     def plot_track_map(self, track: Track):
         self.mpl_canvas.fig.clf()
         ax = self.mpl_canvas.fig.add_subplot(111)
+        ax.set_facecolor('#ffffff') # Bílé pozadí grafu
         x, y = track.x, track.y
         alpha_deg = np.degrees(track.alpha) if hasattr(track, 'alpha') and track.alpha is not None else np.zeros_like(x)
 
@@ -394,8 +453,10 @@ class MainWindow(QMainWindow):
         ax.set_xlim(x.min() - 20, x.max() + 20)
         ax.set_ylim(y.min() - 20, y.max() + 20)
         ax.set_aspect('equal')
-        ax.plot(x[0], y[0], 'o', color='lime', markersize=8, markeredgecolor='black')
+        ax.plot(x[0], y[0], 'o', color='#10b981', markersize=8, markeredgecolor='black') # Moderní zelená tečka
         ax.axis('off')
+        
+        self.mpl_canvas.fig.tight_layout()
         self.mpl_canvas.draw()
   
     # ==========================================
@@ -490,6 +551,8 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "error", f"track generation failed:\n{message}")
 
 
+
+
 class CarConfigDialog(QDialog):
     def __init__(self, current_params, parent=None):
         super().__init__(parent)
@@ -497,10 +560,27 @@ class CarConfigDialog(QDialog):
         
         self.setWindowTitle("Configure car")
         self.setModal(True) 
-        self.resize(300, 250)
+        self.resize(360, 320) # Mírně zvětšeno pro lepší padding
+
+        # Aplikování stejného moderního stylu
+        if parent and hasattr(parent, 'styleSheet'):
+            self.setStyleSheet(parent.styleSheet())
+        
+        self.setStyleSheet(self.styleSheet() + """
+            QDialog {
+                background-color: #ffffff; 
+            }
+            QLabel {
+                color: #1e293b;
+            }
+        """)
 
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(15)
+        
         form_layout = QFormLayout()
+        form_layout.setSpacing(12)
 
         def create_spin(val, unit, min_val=0.0, max_val=10000.0, step=0.1):
             spin = QDoubleSpinBox()
@@ -536,9 +616,28 @@ class CarConfigDialog(QDialog):
 
         layout.addLayout(form_layout)
 
+        # Spodní tlačítka s moderním vzhledem
         self.button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
         self.button_box.accepted.connect(self.accept)
         self.button_box.rejected.connect(self.reject)
+        
+        # Nastavení stylů pro defaultní dialogová tlačítka
+        save_btn = self.button_box.button(QDialogButtonBox.StandardButton.Save)
+        cancel_btn = self.button_box.button(QDialogButtonBox.StandardButton.Cancel)
+        
+        if save_btn:
+            save_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            save_btn.setStyleSheet("""
+                QPushButton { background-color: #3b82f6; color: white; border-radius: 6px; padding: 8px 16px; font-weight: bold; }
+                QPushButton:hover { background-color: #2563eb; }
+            """)
+        if cancel_btn:
+            cancel_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            cancel_btn.setStyleSheet("""
+                QPushButton { background-color: #e2e8f0; color: #334155; border-radius: 6px; padding: 8px 16px; font-weight: bold; }
+                QPushButton:hover { background-color: #cbd5e1; }
+            """)
+
         layout.addWidget(self.button_box)
 
     def get_params(self):

@@ -10,8 +10,8 @@
     "regen_eff": 0.8,
     "laps": 22,
     "ds": 0.5,
-    "model_type": "mass_point",
+    "model_type": "mass_point_rk4",
     "energy_limit": null,
-    "drs_allowed": true,
+    "drs_allowed": false,
     "soc_start": 1.0
 }
