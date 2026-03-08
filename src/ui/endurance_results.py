@@ -412,7 +412,7 @@ class EnduranceResultsWindow(QWidget):
         if filepath:
             try:
                 # currently saving only the selected lap
-                save_results_to_npz(filepath, self.current_res, self.track.name, self.ds)
+                save_results_to_npz(filepath, self.current_res, self.track.name, self.ds,self.car)
                 self.btn_save.setText("Saved Current Lap!")
             except Exception as e:
                 print(f"Error: {e}")

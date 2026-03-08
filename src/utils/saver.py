@@ -1,17 +1,32 @@
 import numpy as np
 import os
+import json
 from scipy.interpolate import interp1d
 
-def save_results_to_npz(filepath, res, track, ds):
+def save_results_to_npz(filepath, res, track, ds, car=None):
     
-    
-    #results folder has to exist
+    # results folder has to exist
     directory = os.path.dirname(filepath)
     if directory and not os.path.exists(directory):
         os.makedirs(directory)
 
     sens_array = np.array([res.sens]) if res.sens else np.array([])
-
+    
+    car_config_str = "{}"
+    if car is not None:
+        
+        target_keys = [
+            "weight", "cd", "cd_drs", "cl", "cl_drs", 
+            "cop", "power_max", "regen_eff",
+            "model_type", "energy_limit", "drs_allowed", "soc_start","name"
+        ]
+        
+        car_dict = {}
+        for key in target_keys:
+           
+            car_dict[key] = getattr(car, key, None)
+            
+        car_config_str = json.dumps(car_dict)
 
     print(f"Saving results to: {filepath}")
 
@@ -23,12 +38,12 @@ def save_results_to_npz(filepath, res, track, ds):
     
     np.savez_compressed(
         filepath,
-        #main data
+        # main data
         t=res.t,
         v=res.v,
         s=res.s,
-        x= x_aligned,
-        y= y_aligned,
+        x=x_aligned,
+        y=y_aligned,
         E=res.E,
         f_acc=res.f_acc,
         f_brake=res.f_brake,
@@ -36,9 +51,12 @@ def save_results_to_npz(filepath, res, track, ds):
         # scalar values
         lap_time=res.lap_time,
         
-        #metadata
+        # metadata
         track_name=str(track.name),
         ds=float(ds),
+        
+        # Zfiltrovaný JSON auta
+        car_config=car_config_str,
         
         # sensitivity dictionary
         sens=sens_array

@@ -52,17 +52,13 @@ for sim in range(Num_Simulations):
     # Plot each simulation
     plt.plot(laps_vector, grip_history, color=(0.2, 0.6, 1.0, 0.3), linewidth=1.5)
 
-# ---------------------------
-# IDEAL CURVE (NO NOISE)
-# ---------------------------
+
 ideal_curve = mu_cold + (mu_optimal - mu_cold) * (1 - np.exp(-laps_vector / Tire_Model["Warmup_Tau"]))
 plt.plot(laps_vector, ideal_curve, "r--", linewidth=2, label="Ideal warmup")
 
 plt.axhline(Base_Mu_X, color="black", linestyle="-", label="Optimal Grip")
 
-# ---------------------------
-# PLOT STYLING
-# ---------------------------
+
 plt.title(
     f"Tire evolution model (Start: {Tire_Model['Cold_Factor']*100:.0f}%, Tau: {Tire_Model['Warmup_Tau']:.1f})"
 )

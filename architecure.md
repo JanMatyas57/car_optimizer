@@ -1,203 +1,149 @@
-### 1. Class diagram
+# OptiSim architecture 
+
+## 1. Class diagram
 
 
 ```mermaid
 classDiagram
-    %% --- DATA STRUCTURES ---
-    class SolverResults {
-        <<dataclass>>
-        +bool success
-        +float lap_time
-        +ndarray t
-        +ndarray v
-        +ndarray s
-        +ndarray f_acc
-        +ndarray f_brake
-        +ndarray E
-        +ndarray SoC
-        +dict sens
+    class SimulationApp {
+        -SimulationController controller
+        -MainWindow main_window
+        -list open_windows
+        +start()
+        +handle_simulation_finished(payload)
+        +handle_error(err_msg)
+        +open_strategy_window(track_name)
     }
 
-    class InitConditions {
-        <<dataclass>>
-        +float v
-        +float T
-        +float E
-        +float n
-        +float xi
+    class MainWindow {
+        -SimulationController controller
+        -LoadingOverlay loading_overlay
+        +openCompareRequested: pyqtSignal
+        +openStrategyRequested: pyqtSignal
+        +on_run_single_clicked()
+        +on_lap_map_clicked()
+        -_get_car_params() dict
     }
+
+    %% Data Transfer Objects (DTOs)
+    class BaseRequest {
+        +dict car_params
+        +float ds
+    }
+    class SingleLapRequest
+    class EnduranceRequest
+    class LapMapTestRequest
+    class StrategyOptRequest
+    class DeploymentOptRequest
+    
+    BaseRequest <|-- SingleLapRequest
+    BaseRequest <|-- EnduranceRequest
+    BaseRequest <|-- LapMapTestRequest
+    BaseRequest <|-- StrategyOptRequest
+    StrategyOptRequest <|-- DeploymentOptRequest
+
+    class SimulationController {
+        -SimulationWorker active_worker
+        +simulationStarted: pyqtSignal
+        +simulationProgress: pyqtSignal
+        +simulationFinished: pyqtSignal
+        +simulationError: pyqtSignal
+        +handle_request(req: BaseRequest)
+        -_create_solver(...)
+    }
+
+    class SimulationWorker {
+        -SimulationTask task
+        +progress: pyqtSignal
+        +finished: pyqtSignal
+        +error: pyqtSignal
+        +run()
+    }
+
+    %% Tasks
+    class SimulationTask {
+        <<Abstract>>
+        +execute(progress_callback) SolverPayload
+    }
+    class SingleLapTask
+    class LaptimeMapTask
+    class StrategyOptTask
+    class DeploymentOptTask
+    
+    SimulationTask <|-- SingleLapTask
+    SimulationTask <|-- LaptimeMapTask
+    SimulationTask <|-- StrategyOptTask
+    SimulationTask <|-- DeploymentOptTask
 
     class SolverPayload {
-        <<dataclass>>
         +str kind
         +object data
         +dict meta
     }
 
-    %% --- CORE ---
-    class Car {
-        <<dataclass>>
-        +float mass
-        +float cd
-        +float cl
-        +float acp_capacity
-        +bool drs_allowed
-        +from_ui_widget(ui)$
-        +get_aero_drag(v, cd)
-        +get_recuperation_limit(SoC_ca)
-        +get_friction_limit(v, mass, mu_x, mu_y, cl)
-        +update_regen_usage()
-        +update_grip(lap)
-        +singletrack_time_ode()
-        +singletrack_path_ode()
-    }
-
-    class Track {
-        <<dataclass>>
-        +str name
-        +ndarray s
-        +ndarray kappa
-        +ndarray speed
-        +float length
-        +load(track_name, tracks_dir)$
-        +get_curvature(s_var)
-        +get_heading(s_var)
-        +get_drs_flag(s_var)
-    }
-
-    %% --- SOLVERS ---
-    class MassPointSolver {
-        +Car car
-        +Track track
-        +bool rk4
-        +int laps
-        +solveLap(init_cond, init_guess, ds)
-        +solveLap_rk4(init_cond, init_guess, ds)
-    }
-
-    class SingleTrackSolver {
-        +Car car
-        +Track track
-        +solveLap(init_cond, init_guess, ds)
-    }
-
-    class StrategyMaker {
-        +Car car
-        +function laptime_map
-        +solve(ef_min, T_min, objective)
-        +ef_guess(energy_target_endurance)
-    }
-
-    %% --- WORKERS ---
-    class SolverWorker {
-        <<QThread>>
-        +Solver solver
-        +Car car
-        +Track track
-        +int mode
-        +run()
-        +run_single_lap()
-        +run_endurance()
-        +run_acp_test()
-        +run_endurance_opt()
-        +run_deployment_opt()
-    }
-
-    %% --- RELATIONSHIPS ---
-    %% Aggregations & Compositions
-    SolverWorker o-- Car : holds
-    SolverWorker o-- Track : holds
-    SolverWorker o-- MassPointSolver : uses
-    SolverWorker o-- SingleTrackSolver : uses
-    SolverWorker o-- StrategyMaker : uses
+    %% Relationships
+    SimulationApp *-- SimulationController : Holds instance
+    SimulationApp *-- MainWindow : Holds instance
     
-    MassPointSolver o-- Car : references
-    MassPointSolver o-- Track : references
-    SingleTrackSolver o-- Car : references
-    SingleTrackSolver o-- Track : references
-    StrategyMaker o-- Car : references
-
-    %% Dependencies (Creates/Uses)
-    MassPointSolver ..> SolverResults : creates
-    MassPointSolver ..> InitConditions : requires
-    SingleTrackSolver ..> SolverResults : creates
-    SingleTrackSolver ..> InitConditions : requires
+    MainWindow ..> BaseRequest : Creates DTO
+    MainWindow --> SimulationController : Calls handle_request(req)
     
-    SolverWorker ..> SolverPayload : emits (via signal)
-    SolverPayload o-- SolverResults : wraps
+    SimulationController ..> SimulationTask : Creates based on Request
+    SimulationController *-- SimulationWorker : Manages thread
+    
+    SimulationWorker o-- SimulationTask : Executes
+    SimulationTask ..> SolverPayload : Returns
 ```
 
-### 2. Use case diagram
+## 2. State diagram 
+
 
 ```mermaid
-flowchart LR
-    %% Aktéri
-    User([Používateľ / Inžinier])
 
-    %% Hranice systému (Aplikácia)
-    subgraph App [Laptime & Strategy Optimizer]
-        UC1(Načítať trať a dáta o trati)
-        UC2(Nastaviť parametre vozidla\n a aerodynamiky)
-        UC3(Spustiť simuláciu\n jedného kola)
-        UC4(Spustiť vytrvalostnú\n Endurance simuláciu)
-        UC5(Optimalizovať stratégiu\n Grid Search)
-        UC6(Analyzovať a porovnať\n výsledky v grafoch)
-        UC7(Analyzovať DRS a\n opotrebenie pneumatík)
-    end
 
-    %% Prepojenia (Kto čo robí)
-    User --- UC1
-    User --- UC2
-    User --- UC3
-    User --- UC4
-    User --- UC5
-    User --- UC6
-    User --- UC7
-
-    %% Vzťahy medzi prípadmi použitia
-    UC3 -.->|<<includes>>| UC1
-    UC4 -.->|<<includes>>| UC1
-    UC5 -.->|<<extends>>| UC4
-    UC6 -.->|<<includes>>| UC3
-```
-
-### 3. Activity diagram
-
-```mermaid
 stateDiagram-v2
-    [*] --> KonfiguraciaUI
+    [*] --> Idle: Application waits for user
 
-    state KonfiguraciaUI {
-        VyberTrate: Výber a načítanie trate
-        ParametreVozidla: Zadanie parametrov (hmotnosť, výkon...)
+    state "UI Layer (MainWindow / StrategyWindow)" as UI {
+        Idle --> ReadInput: Button click (e.g., Run Single Lap)
+        ReadInput --> CreateRequest: Create DTO (e.g., SingleLapRequest)
+        CreateRequest --> SendRequest: controller.handle_request(req)
     }
 
-    KonfiguraciaUI --> VyberRežimu: Kliknutie na tlačidlo štart
-    
-    state VyberRežimu <<choice>>
-    VyberRežimu --> PripravaSingleLap : Režim jedného kola
-    VyberRežimu --> PripravaEndurance : Režim Endurance / Optimalizácia
-
-    PripravaSingleLap --> SpustenieWorkerVlakna
-    PripravaEndurance --> SpustenieWorkerVlakna
-
-    state SpustenieWorkerVlakna {
-        ZobrazenieLoading: UI zobrazí LoadingOverlay
-        VypocetWorker: SolverWorker beží na pozadí
-        AktualizaciaProgresu: worker.progress() aktualizuje UI
+    state "Controller Layer (Assembly)" as Controller {
+        SendRequest --> AssembleCar: Initialize Car() from req.car_params
+        AssembleCar --> Routing: What type of Request is it?
+        Routing --> CreateSingleTask: type(req) is SingleLapRequest
+        Routing --> CreateLapMapTask: type(req) is LapMapTestRequest
+        Routing --> CreateStrategyTask: type(req) is StrategyOptRequest
+        Routing --> CreateDeploymentTask: type(req) is DeploymentOptRequest
         
-        ZobrazenieLoading --> VypocetWorker
-        VypocetWorker --> AktualizaciaProgresu
-        AktualizaciaProgresu --> VypocetWorker: Ďalší krok výpočtu
+        CreateSingleTask --> StartWorker
+        CreateLapMapTask --> StartWorker
+        CreateStrategyTask --> StartWorker
+        CreateDeploymentTask --> StartWorker
+        
+        StartWorker --> active_worker.start()
     }
 
-    SpustenieWorkerVlakna --> SpracovanieVysledkov: Signál worker.finished()
-
-    state SpracovanieVysledkov {
-        ZatvorenieLoading: Skrytie LoadingOverlay
-        RozbaleniePayload: Spracovanie SolverPayload
-        VykreslenieGrafov: Otvorenie ResultsWindow / Vykreslenie do UI
+    state "Loading (MainWindow)" as Loading {
+        AssembleCar --> ShowLoading: emit simulationStarted()
     }
 
-    SpracovanieVysledkov --> [*]: Čakanie na ďalšiu akciu
+    state "Worker Thread (SimulationWorker)" as Worker {
+        active_worker.start() --> TaskExecute: task.execute(callback)
+        TaskExecute --> TaskExecute: emit progress(current, total)
+        TaskExecute --> CreatePayload: Computation finished
+    }
+
+    state "Results Processing (SimulationApp)" as Results {
+        CreatePayload --> Finish: emit finished(SolverPayload)
+        
+        Finish --> CreateWindow: App catches signal and checks payload.kind
+        CreateWindow --> ShowWindow: App stores and shows window (Results, Sensitivity, etc.)
+    }
+
+    ShowWindow --> Idle
+    Finish --> HideLoading: UI catches signal and hides overlay
+    HideLoading --> Idle
 ```
