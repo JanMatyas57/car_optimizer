@@ -1,7 +1,7 @@
 from PyQt6.QtCore import QObject, pyqtSignal
 from src.core.car import Car
 from src.core.track import Track
-from src.optimization.solvers import MassPointSolver, StrategyMaker
+from src.optimization.solvers import MassPointSolver, StrategyMaker, QuasiSteadySolver
 from src.optimization.solvers import InitConditions, calculate_initial_guess
 from src.optimization.work_thread import SimulationWorker
 
@@ -30,6 +30,8 @@ class SimulationController(QObject):
        
         if car.model_type == "mass_point_rk4":
             return MassPointSolver(car, track)
+        elif car.model_type == "quasi_steady":
+            return QuasiSteadySolver(car, track)
         else:
             return MassPointSolver(car, track)
 

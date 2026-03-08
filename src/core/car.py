@@ -8,24 +8,25 @@ class Car:
     # --- 1. Parameters from UI ---
     name: str
     weight: float           # [kg]
-    cd: float             # [-] 
-    cl: float             # [-]
-    cd_drs: float 
-    cl_drs: float
-    acp_capacity: float
+    cd: float             # drag coefficient (CdA) [m^2]
+    cl: float             # lift coefficient (positive for downforce) [-]
+    cd_drs: float # drag coefficient with drs closed
+    cl_drs: float # drag coefficient with drs open
+    acp_capacity: float # Max usabel ACP capacity [kWh]
     drs_allowed: bool
-    power_max: float 
-    regen_eff: float 
-    soc_start: float 
-    cop: float 
+    power_max: float # max power [W]
+    regen_eff: float # [-] efficiency of regenerative braking
+    soc_start: float # Batterty state of charge at start of simulation (0-1)
+    cop: float   # center of pressure as % of wheelbase from front axle (0-1)
+    wb: float    # [m] wheelbase
+    tw: float    # [m] car track width
+    wd: float    # [-] weight distribution as % of load on front axle (0-1)
+    cogz: float   # [m] height of center of gravity
+    i: float     #car gear ratio
+    M_max: float  #max torque of the car [Nm]
     energy_limit: float = None  # [kWh] 
-    performance_delta: float = 0.0
+    performance_delta: float = 0.0 # [-] performance modifier for strategy optimization, dont change
 
-    # Calculated fields 
-    fz_static_f: float = field(init=False)
-    fz_static_r: float = field(init=False)
-    cs_static_f : float = field(init=False)
-    cs_static_r : float = field(init=False)
 
     model_type: str = "mass_point"
 
@@ -34,14 +35,13 @@ class Car:
     g = 9.81
 
     # Powertrain
-    brake_max = 60000
+    brake_max = 100000
     power_eff = 0.88
     fix_drag = 230
     wheel_radius = 0.205
-    max_torque = 30.0
-    gear_ratio = 11.46
     brake_bias = 0.55
     power_dist = 0.5
+    v_max = 40 #not used for max bounds of GVV calcullation
     
     #grip
     mu_x: float = 1.25           # [-] 
@@ -53,19 +53,9 @@ class Car:
     power_limit_W = [10e3, 14e3, 21e3, 35e3, 62e3, 79e3, 89e3, 95e3, 100e3, 100e3,100e3]
     soc_to_power_interp = ca.interpolant('soc_power', 'bspline', [soc_grid_power], power_limit_W)
 
-    # Suspension
-    cogr = 0.5 
-    cogz = 0.3
-    sus_t = 0.2
-    Iz = 110 
-    wheelbase = 1.53 
-    weight_distrib = 0.46 # to rear
-    steeringAngle_max = 25/180*ca.pi;
     
-  
-    lf = wheelbase * cogr
-    lr = wheelbase - lf
     
+
     tire_model = { 
         "cold_factor": 0.8, 
         "warmup_tau": 1.6, 
@@ -74,15 +64,7 @@ class Car:
         "mu_y_nominal":1.22
     }
 
-    def __post_init__(self):
-        # calculate static weight
-        self.fz_static_f = self.weight * self.g * (1 - self.weight_distrib)
-        self.fz_static_r = self.weight * self.g * self.weight_distrib
-        #self.cs_static_f = self.get_cornering_stiffness(self.fz_static_f)
-        #self.cs_static_r = self.get_cornering_stiffness(self.fz_static_r)
-        #print(f"cornering stiffness front: {self.cs_static_f}")
-        self.cs_static_f = 2 * self.get_cornering_stiffness(self.fz_static_f/2)
-        self.cs_static_r = 2 * self.get_cornering_stiffness(self.fz_static_r/2)
+
 
 
     # car calculation functions 

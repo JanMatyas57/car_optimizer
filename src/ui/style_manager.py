@@ -59,7 +59,7 @@ class StyleManager:
             /* --- KONTEJNERY A BOXY --- */
             QGroupBox {
                 background-color: #ffffff;
-                border: 1px solid #e2e8f0;
+                border: 1px solid #3b82f6;
                 border-radius: 8px;
                 margin-top: 15px; 
                 padding-top: 10px;

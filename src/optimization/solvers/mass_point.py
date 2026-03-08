@@ -154,7 +154,7 @@ class MassPointSolver(BaseSolver):
         # =========================
         opti.subject_to(
             ((self.car.wheel_radius * F_acc)) /
-            (self.car.max_torque * self.car.gear_ratio * 4) < 1
+            (self.car.M_max * self.car.i * 4) < 1
         )
 
         # =========================

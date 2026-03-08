@@ -4,7 +4,7 @@ import numpy as np
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                              QHBoxLayout, QFormLayout, QGroupBox, QComboBox, 
                              QDoubleSpinBox, QPushButton, QSplitter, QCheckBox, 
-                             QFileDialog, QMessageBox, QDialog, QDialogButtonBox, QInputDialog,QScrollArea)
+                             QFileDialog, QMessageBox, QDialog, QDialogButtonBox, QInputDialog,QScrollArea,QLineEdit)
 from PyQt6.QtCore import Qt, pyqtSignal
 
 # track for rendering
@@ -45,10 +45,15 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.controller = controller
 
-        # store defaults to use them when creating a new car or handling missing files
         self.default_params = {
-            "acp_capacity": 6.0,
+            "acp_capacity": 6.0,  #
             "weight": 280.0,
+            "wb": 1.53,           # wheelbase
+            "tw": 1.25,           # track width
+            "wd": 0.53,           # weight distribution
+            "cogz": 0.3,         # center of gravity 
+            "i": 11.46,            # gear ratio
+            "M_max": 30.0,        # max torque
             "cd": 1.83,
             "cd_drs": 1.17,
             "cl": 5.64,
@@ -61,7 +66,7 @@ class MainWindow(QMainWindow):
             "model_type": "mass_point",
             "energy_limit": None,
             "drs_allowed": True,
-            "soc_start": 0.67 # moved to simulation settings
+            "soc_start": 0.67 
         }
         
         # current active parameters
@@ -267,7 +272,7 @@ class MainWindow(QMainWindow):
         # 1. vehicle model
         self.combo_model = QComboBox()
         self.combo_model.addItem("Mass point (Rk4)", "mass_point_rk4")
-        self.combo_model.addItem("Single track", "single_track")
+        self.combo_model.addItem("Quasi Steady", "quasi_steady")
         layout.addRow("Vehicle model:", self.combo_model)
 
         # 2. vehicle profile selector
@@ -592,107 +597,169 @@ class MainWindow(QMainWindow):
             if idx >= 0:
                 self.combo_track.setCurrentIndex(idx)
 
-    
-
-
-
 
 class CarConfigDialog(QDialog):
-    def __init__(self, current_params, parent=None):
+    def __init__(self, car_params=None, parent=None):
         super().__init__(parent)
-        self.current_params = current_params.copy()
+        self.setWindowTitle("Vehicle configuration")
+        self.setMinimumWidth(500)
+        self.setMinimumHeight(700)
         
-        self.setWindowTitle("Configure car")
-        self.setModal(True) 
-        self.resize(360, 320) 
-
-     
-        if parent and hasattr(parent, 'styleSheet'):
-            self.setStyleSheet(parent.styleSheet())
+        # Profile parameters from UI 
+        self.params = car_params if car_params else {}
         
-        self.setStyleSheet(self.styleSheet() + """
-            QDialog {
-                background-color: #ffffff; 
-            }
-            QLabel {
-                color: #1e293b;
-            }
-        """)
+        self._init_ui()
+        self._populate_data()
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 20, 20, 20)
-        layout.setSpacing(15)
+    def _init_ui(self):
+        # Main dialog layout 
+        self.main_layout = QVBoxLayout(self)
+        self.main_layout.setSpacing(0)
+        self.main_layout.setContentsMargins(0, 0, 0, 0)
+
+        # 1. Scroll Area - fix for black background 
+        self.scroll_area = QScrollArea()
+        self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setFrameShape(QScrollArea.Shape.NoFrame)
+        # Force transparent viewport to see the container background 
+        self.scroll_area.viewport().setStyleSheet("background: transparent;")
         
-        form_layout = QFormLayout()
-        form_layout.setSpacing(12)
-
-        def create_spin(val, unit, min_val=0.0, max_val=10000.0, step=0.1):
-            spin = QDoubleSpinBox()
-            spin.setRange(min_val, max_val)
-            spin.setSingleStep(step)
-            spin.setSuffix(f" {unit}")
-            spin.setValue(val if val is not None else min_val)
-            return spin
-
-        self.input_weight = create_spin(current_params.get("weight"), "kg", min_val=150, step=0.5)
-        form_layout.addRow("Weight:", self.input_weight)
+        # 2. Content Container 
+        self.container = QWidget()
+        # White background matches your QTabWidget > QWidget rule 
+        self.container.setStyleSheet("background-color: #ffffff;")
         
-        self.input_cd = create_spin(current_params.get("cd"), "", step=0.01)
-        form_layout.addRow("Drag coeff (Cd):", self.input_cd)
+        self.container_layout = QVBoxLayout(self.container)
+        self.container_layout.setContentsMargins(20, 20, 20, 20)
+        self.container_layout.setSpacing(15)
 
-        self.input_cd_drs = create_spin(current_params.get("cd_drs"), "", step=0.01)
-        form_layout.addRow("Drag coeff DRS (Cd drs):", self.input_cd_drs)
+        # Helper to style groupboxes with blue border 
+        blue_border_style = "QGroupBox { border: 1px solid #3b82f6; }"
+
+        # --- Section: General ---
+        group_general = QGroupBox("General")
+        group_general.setStyleSheet(blue_border_style)
+        form_general = QFormLayout()
+        self.edit_name = QLineEdit()
+        form_general.addRow("Profile name:", self.edit_name)
+        group_general.setLayout(form_general)
+        self.container_layout.addWidget(group_general)
+
+        # --- Section: Chassis & Geometry ---
+        group_chassis = QGroupBox("Chassis")
+        group_chassis.setStyleSheet(blue_border_style)
+        form_chassis = QFormLayout()
+        self.spin_weight = self._create_double_spinbox(0, 1000, 280.0, decimals=1)
+        self.spin_wb = self._create_double_spinbox(0.1, 5.0, 1.53, decimals=3)
+        self.spin_tw = self._create_double_spinbox(0.1, 3.0, 1.20, decimals=3)
+        self.spin_wd = self._create_double_spinbox(0.0, 1.0, 0.53, step=0.01)
+        self.spin_cogz = self._create_double_spinbox(0.0, 1.5, 0.25, step=0.01)
+
+        form_chassis.addRow("Total weight [kg]:", self.spin_weight)
+        form_chassis.addRow("Wheelbase [m]:", self.spin_wb)
+        form_chassis.addRow("Track width [m]:", self.spin_tw)
+        form_chassis.addRow("Weight distribution (front) [0-1]:", self.spin_wd)
+        form_chassis.addRow("CoG height [m]:", self.spin_cogz)
+        group_chassis.setLayout(form_chassis)
+        self.container_layout.addWidget(group_chassis)
+
+        # --- Section: Aerodynamics ---
+        group_aero = QGroupBox("Aerodynamics")
+        group_aero.setStyleSheet(blue_border_style)
+        form_aero = QFormLayout()
+        self.spin_cd = self._create_double_spinbox(0, 10, 1.83, step=0.01)
+        self.spin_cl = self._create_double_spinbox(0, 15, 5.64, step=0.05)
+        self.spin_cop = self._create_double_spinbox(0, 1.0, 0.53, step=0.01)
+        self.spin_cd_drs = self._create_double_spinbox(0, 10, 1.17, step=0.01)
+        self.spin_cl_drs = self._create_double_spinbox(0, 15, 4.20, step=0.05)
+
+        form_aero.addRow("Drag coefficient (CdA):", self.spin_cd)
+        form_aero.addRow("Lift coefficient (ClA):", self.spin_cl)
+        form_aero.addRow("Center of pressure [0-1]:", self.spin_cop)
+        form_aero.addRow("CdA (DRS open):", self.spin_cd_drs)
+        form_aero.addRow("ClA (DRS open):", self.spin_cl_drs)
+        group_aero.setLayout(form_aero)
+        self.container_layout.addWidget(group_aero)
+
+        # --- Section: Powertrain ---
+        group_power = QGroupBox("Powertrain")
+        group_power.setStyleSheet(blue_border_style)
+        form_power = QFormLayout()
+        self.spin_power_max = self._create_double_spinbox(0, 250, 80.0, step=1.0, decimals=1)
+        self.spin_M_max = self._create_double_spinbox(0, 500, 30.0, step=0.5)
+        self.spin_i = self._create_double_spinbox(0, 50, 12.0, step=0.1)
+        self.spin_regen = self._create_double_spinbox(0.0, 1.0, 0.8, step=0.05)
+
+        form_power.addRow("Max power limit [kW]:", self.spin_power_max)
+        form_power.addRow("Max motor torque [Nm]:", self.spin_M_max)
+        form_power.addRow("Gear ratio (i):", self.spin_i)
+        form_power.addRow("Driver recuperation factor [0-1]:", self.spin_regen)
+        group_power.setLayout(form_power)
+        self.container_layout.addWidget(group_power)
+
+        self.scroll_area.setWidget(self.container)
+        self.main_layout.addWidget(self.scroll_area)
+
+        # --- Bottom Button Area ---
+
+        self.button_container = QWidget()
+        self.button_container.setObjectName("HighlightedGroup")
         
-        self.input_cl = create_spin(current_params.get("cl"), "", step=0.01)
-        form_layout.addRow("Downforce coeff (Cl):", self.input_cl)
+        self.button_layout = QHBoxLayout(self.button_container)
+        self.button_layout.setContentsMargins(15, 15, 15, 15)
 
-        self.input_cl_drs = create_spin(current_params.get("cl_drs"), "", step=0.01)
-        form_layout.addRow("Downforce coeff DRS (Cl drs):", self.input_cl_drs)
-
-        self.input_cop = create_spin(current_params.get("cop"), "", step=0.01)
-        form_layout.addRow("Center of pressure (CoP):", self.input_cop)
+        self.buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        self.buttons.accepted.connect(self.accept)
+        self.buttons.rejected.connect(self.reject)
         
-        self.input_power = create_spin(current_params.get("power_limit", 80.0), "kW", min_val=10.0, max_val=1000.0, step=1.0)
-        form_layout.addRow("Power limit:", self.input_power)
-        
-        self.input_regen = create_spin(current_params.get("regen_eff", 0.8), "", min_val=0.0, max_val=1.0, step=0.05)
-        form_layout.addRow("Regen factor:", self.input_regen)
+        self.button_layout.addWidget(self.buttons)
+        self.main_layout.addWidget(self.button_container)
 
-        layout.addLayout(form_layout)
+    def _create_double_spinbox(self, v_min, v_max, default_val, step=0.1, decimals=2):
+        sb = QDoubleSpinBox()
+        sb.setRange(v_min, v_max)
+        sb.setSingleStep(step)
+        sb.setDecimals(decimals)
+        sb.setValue(default_val)
+        return sb
 
-    
-        self.button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
-        self.button_box.accepted.connect(self.accept)
-        self.button_box.rejected.connect(self.reject)
-        
-     
-        save_btn = self.button_box.button(QDialogButtonBox.StandardButton.Save)
-        cancel_btn = self.button_box.button(QDialogButtonBox.StandardButton.Cancel)
-        
-        if save_btn:
-            save_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            save_btn.setStyleSheet("""
-                QPushButton { background-color: #3b82f6; color: white; border-radius: 6px; padding: 8px 16px; font-weight: bold; }
-                QPushButton:hover { background-color: #2563eb; }
-            """)
-        if cancel_btn:
-            cancel_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            cancel_btn.setStyleSheet("""
-                QPushButton { background-color: #e2e8f0; color: #334155; border-radius: 6px; padding: 8px 16px; font-weight: bold; }
-                QPushButton:hover { background-color: #cbd5e1; }
-            """)
+    def _populate_data(self):
+        # Fill UI from dict 
+        p = self.params
+        self.edit_name.setText(p.get("name", "New Vehicle"))
+        self.spin_weight.setValue(p.get("weight", 280.0))
+        self.spin_wb.setValue(p.get("wb", 1.53))
+        self.spin_tw.setValue(p.get("tw", 1.20))
+        self.spin_wd.setValue(p.get("wd", 0.53))
+        self.spin_cogz.setValue(p.get("cogz", 0.25))
+        self.spin_cd.setValue(p.get("cd", 1.83))
+        self.spin_cl.setValue(p.get("cl", 5.64))
+        self.spin_cop.setValue(p.get("cop", 0.53))
+        self.spin_cd_drs.setValue(p.get("cd_drs", 1.17))
+        self.spin_cl_drs.setValue(p.get("cl_drs", 4.2))
+        self.spin_power_max.setValue(p.get("power_limit", 80.0))
+        self.spin_M_max.setValue(p.get("M_max", 30.0))
+        self.spin_i.setValue(p.get("i", 12.0))
+        self.spin_regen.setValue(p.get("regen_eff", 0.8))
 
-        layout.addWidget(self.button_box)
-
-    def get_params(self):
-        self.current_params.update({
-            "weight": round(self.input_weight.value(),1),
-            "cd": round(self.input_cd.value(),2),
-            "cl": round(self.input_cl.value(),2),
-            "cd_drs": round(self.input_cd_drs.value(),2),
-            "cl_drs": round(self.input_cl_drs.value(),2),
-            "cop": round(self.input_cop.value(),2),
-            "power_limit": round(self.input_power.value(),1),
-            "regen_eff": round(self.input_regen.value(),2)
+    def get_params(self) -> dict:
+        # Return updated dict 
+        new_params = self.params.copy()
+        new_params.update({
+            "name": self.edit_name.text(),
+            "weight": self.spin_weight.value(),
+            "wb": self.spin_wb.value(),
+            "tw": self.spin_tw.value(),
+            "wd": self.spin_wd.value(),
+            "cogz": self.spin_cogz.value(),
+            "cd": self.spin_cd.value(),
+            "cl": self.spin_cl.value(),
+            "cop": self.spin_cop.value(),
+            "cd_drs": self.spin_cd_drs.value(),
+            "cl_drs": self.spin_cl_drs.value(),
+            "power_limit": self.spin_power_max.value(),
+            "M_max": self.spin_M_max.value(),
+            "i": self.spin_i.value(),
+            "regen_eff": self.spin_regen.value()
         })
-        return self.current_params
+        return new_params
