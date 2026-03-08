@@ -114,7 +114,7 @@ class Track:
     def get_drs_flag(self, s_var):
         
         if self.drs_interp is None:
-            # Pokud trať nemá DRS, vracíme 0 (funguje pro scalar i CasADi vector)
+            
             if isinstance(s_var, (ca.MX, ca.SX)):
                 return ca.DM.zeros(s_var.shape)
             return 0.0

@@ -13,5 +13,6 @@
     "model_type": "mass_point_rk4",
     "energy_limit": null,
     "drs_allowed": false,
-    "soc_start": 1.0
+    "soc_start": 0.1,
+    "name": "default_car"
 }

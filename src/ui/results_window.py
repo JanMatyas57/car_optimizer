@@ -34,7 +34,7 @@ class ResultsWindow(QWidget):
         self.center_window()
         self.setWindowTitle(f"Simulation results - {res.lap_time:.3f} s")
         
-        # --- APLIKACE MODERNÍHO VZHLEDU (QSS) ---
+       
         self.setStyleSheet("""
             QWidget {
                 font-family: 'Segoe UI', system-ui, sans-serif;
@@ -150,7 +150,7 @@ class ResultsWindow(QWidget):
         stats_widget = QWidget()
         grid = QGridLayout(stats_widget)
         grid.setContentsMargins(0, 0, 0, 0)
-        grid.setHorizontalSpacing(40) # Mírně zvětšen rozestup pro více dat
+        grid.setHorizontalSpacing(40)
         stats_widget.setStyleSheet("background-color: transparent;")
         
         def add_stat(row, col, label, value, unit):
@@ -165,12 +165,12 @@ class ResultsWindow(QWidget):
             grid.addWidget(lbl_val, row, col+1)
             grid.addWidget(lbl_unit, row, col+2)
 
-        # Výpočty dat
+    
         max_v = np.max(self.res.v) * 3.6
         avg_v = np.mean(self.res.v) * 3.6
         total_energy = self.res.E[-1] - self.res.E[0]
         
-        # Získání SoC hodnot (ošetření pokud res.SoC neexistuje)
+       
         soc_start = self.res.SoC[0] if self.res.SoC is not None else 0.0
         soc_end = self.res.SoC[-1] if self.res.SoC is not None else 0.0
 
@@ -256,7 +256,7 @@ class ResultsWindow(QWidget):
 
         if filepath:
             try:
-                save_results_to_npz(filepath, self.res, self.track, self.ds)
+                save_results_to_npz(filepath, self.res, self.track, self.ds,self.car)
                 self.btn_save.setText("Saved!")
                 self.btn_save.setStyleSheet("background-color: #10b981; color: white;")
             except Exception as e:

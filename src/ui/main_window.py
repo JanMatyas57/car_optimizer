@@ -10,10 +10,13 @@ from PyQt6.QtCore import Qt, pyqtSignal
 # track for rendering
 from src.core.track import Track
 from src.core.trackGenerator import TrackGenerator
-from src.optimization.track_generation_thread import TrackGenerationWorker
 from src.handlers.requests import SingleLapRequest, EnduranceRequest, LapMapTestRequest
 from src.ui.loader import LoadingOverlay
+from src.ui.track_generator_dialog import TrackGeneratorDialog
 from src.utils.config_manager import ConfigManager
+from src.ui.track_tools import DRSEditorDialog
+import os
+import numpy as np
 
 from PyQt6.QtGui import QGuiApplication, QTransform, QColor, QFont
 import matplotlib
@@ -26,7 +29,6 @@ from matplotlib.colors import Normalize
 class MplCanvas(FigureCanvasQTAgg):
     def __init__(self, parent=None, width=5, height=4, dpi=100):
         self.fig = Figure(figsize=(width, height), dpi=dpi)
-        # Nastavení barvy pozadí grafu, aby ladil s moderním UI
         self.fig.patch.set_facecolor('#ffffff')
         self.axes = self.fig.add_subplot(111)
         self.axes.set_facecolor('#ffffff')
@@ -59,7 +61,7 @@ class MainWindow(QMainWindow):
             "model_type": "mass_point",
             "energy_limit": None,
             "drs_allowed": True,
-            "soc_start": 1.0 # moved to simulation settings
+            "soc_start": 0.67 # moved to simulation settings
         }
         
         # current active parameters
@@ -68,29 +70,27 @@ class MainWindow(QMainWindow):
 
         self.setWindowTitle("OptiSim")
         
-        # --- DYNAMICKÁ VELIKOST OKNA ---
+    
         screen = QGuiApplication.primaryScreen()
-        available_geometry = screen.availableGeometry() # Plocha bez Taskbaru!
+        available_geometry = screen.availableGeometry() 
 
         screen_width = available_geometry.width()
         screen_height = available_geometry.height()
 
-        # Chceme 85 % šířky a 90 % výšky obrazovky
+     
         target_width = int(screen_width * 0.85)
         target_height = int(screen_height * 0.90)
 
-        # Omezíme to ale rozumným maximem, aby na 2K monitoru nebyla appka zbytečně obří
+     
         target_width = min(target_width, 1600)
         target_height = min(target_height, 1200)
 
         self.resize(target_width, target_height)
 
-        # Pokud je okno po výpočtu pořád moc blízko velikosti samotné obrazovky (malé notebooky),
-        # je lepší ho rovnou spustit maximalizované
         if target_width >= screen_width * 0.95 or target_height >= screen_height * 0.95:
             self.showMaximized()
 
-        # --- HLAVNÍ LAYOUT ---
+        # main layout
         self.central_widget = QWidget()
         self.central_widget.setObjectName("CentralWidget")
         self.setCentralWidget(self.central_widget)
@@ -98,21 +98,20 @@ class MainWindow(QMainWindow):
         self.main_layout.setContentsMargins(15, 15, 15, 15)
         self.main_layout.setSpacing(15)
 
-        # --- LEVÝ KONTROLNÍ PANEL ---
+        # left panel
         self.control_panel = QWidget()
         self.control_panel.setObjectName("ControlPanel")
         self.control_layout = QVBoxLayout(self.control_panel)
-        # Přidáme drobný pravý okraj (10px), aby texty nebyly nalepené přímo na scrollbar
         self.control_layout.setContentsMargins(0, 0, 10, 0) 
         self.control_layout.setSpacing(15)
         
-        # Obalíme náš kontrolní panel do QScrollArea
+    
         self.left_scroll_area = QScrollArea()
         self.left_scroll_area.setObjectName("LeftScrollArea")
-        self.left_scroll_area.setWidgetResizable(True) # Důležité: dovolí obsahu se roztáhnout
+        self.left_scroll_area.setWidgetResizable(True) 
         self.left_scroll_area.setFrameShape(QScrollArea.Shape.NoFrame)
         self.left_scroll_area.setWidget(self.control_panel)
-        # Scroll area bude mírně širší, aby se do ní vlezl panel i scrollbar
+
         self.left_scroll_area.setFixedWidth(360) 
         
         self.init_track_section() 
@@ -140,7 +139,7 @@ class MainWindow(QMainWindow):
         self.btn_compare.clicked.connect(self.on_compare_clicked)
         self.control_layout.addWidget(self.btn_compare)
 
-        # --- PRAVÝ PANEL (GRAFY) ---
+        # right panel
         self.graph_panel = QWidget()
         self.graph_panel.setObjectName("GraphPanel")
         self.graph_layout = QVBoxLayout(self.graph_panel)
@@ -148,7 +147,7 @@ class MainWindow(QMainWindow):
         
         self.mpl_canvas = MplCanvas(self, width=5, height=4, dpi=100)
         
-        # Obalení plátna do kontejneru pro elegantní stín/rámeček
+     
         self.canvas_container = QWidget()
         self.canvas_container.setObjectName("CanvasContainer")
         canvas_layout = QVBoxLayout(self.canvas_container)
@@ -157,17 +156,17 @@ class MainWindow(QMainWindow):
         
         self.graph_layout.addWidget(self.canvas_container)
 
-        # --- HLAVNÍ ROZDĚLOVAČ (SPLITTER) ---
+        # spllitter
         splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter.setObjectName("MainSplitter")
         splitter.setHandleWidth(8)
-        # ZDE PŘIDÁVÁME SCROLL AREA MÍSTO SAMOTNÉHO PANELU
+    
         splitter.addWidget(self.left_scroll_area) 
         splitter.addWidget(self.graph_panel)
         splitter.setSizes([360, 940])
         self.main_layout.addWidget(splitter)
 
-        # --- LOADER A STYLY ---
+        #loader and styles
         self.loading_overlay = LoadingOverlay(self)
         
         self.controller.simulationStarted.connect(self.loading_overlay.show_loading)
@@ -283,7 +282,7 @@ class MainWindow(QMainWindow):
         self.btn_new_vehicle.setFixedWidth(32)
         self.btn_new_vehicle.setFixedHeight(32)
         self.btn_new_vehicle.clicked.connect(self.on_new_vehicle_clicked)
-        self.btn_new_vehicle.setToolTip("create a new vehicle profile")
+        self.btn_new_vehicle.setToolTip("Create a new vehicle profile")
         
         veh_layout.addWidget(self.combo_vehicle)
         veh_layout.addWidget(self.btn_new_vehicle)
@@ -307,9 +306,10 @@ class MainWindow(QMainWindow):
         
         # 5. SoC start
         self.input_soc = QDoubleSpinBox()
-        self.input_soc.setRange(0.1, 1.0)
-        self.input_soc.setSingleStep(0.05)
-        self.input_soc.setDecimals(2)
+        self.input_soc.setRange(10, 100)
+        self.input_soc.setSingleStep(1)
+        self.input_soc.setDecimals(2)     
+        self.input_soc.setSuffix(" %")
         layout.addRow("SoC start:", self.input_soc)
 
         # 6. drs
@@ -332,7 +332,8 @@ class MainWindow(QMainWindow):
         self.input_limit_e.setEnabled(self.check_energy_limit.isChecked())
         
         # update soc_start
-        self.input_soc.setValue(self.car_params.get("soc_start", 1.0))
+        soc_val = self.car_params.get("soc_start", 0.67)
+        self.input_soc.setValue(soc_val * 100.0)
         
         self.check_drs.setChecked(self.car_params.get("drs_allowed", True))
 
@@ -371,7 +372,8 @@ class MainWindow(QMainWindow):
         self.car_params["drs_allowed"] = self.check_drs.isChecked()
         self.car_params["energy_limit"] = self.input_limit_e.value() if self.check_energy_limit.isChecked() else None
         self.car_params["ds"] = self.input_ds.value()
-        self.car_params["soc_start"] = self.input_soc.value() # grab soc from UI
+        self.car_params["soc_start"] = self.input_soc.value()/100# grab soc from UI
+        self.car_params["name"] = self.current_vehicle_name
 
     def _get_car_params(self):
         self._sync_params_from_ui()
@@ -436,27 +438,49 @@ class MainWindow(QMainWindow):
 
     def plot_track_map(self, track: Track):
         self.mpl_canvas.fig.clf()
+       
         ax = self.mpl_canvas.fig.add_subplot(111)
-        ax.set_facecolor('#ffffff') # Bílé pozadí grafu
+        ax.set_facecolor('#ffffff')
+        
         x, y = track.x, track.y
+        
         alpha_deg = np.degrees(track.alpha) if hasattr(track, 'alpha') and track.alpha is not None else np.zeros_like(x)
 
+      
         points = np.array([x, y]).T.reshape(-1, 1, 2)
         segments = np.concatenate([points[:-1], points[1:]], axis=1)
 
+  
         norm = Normalize(vmin=np.min(alpha_deg), vmax=np.max(alpha_deg))
         lc = LineCollection(segments, cmap='viridis', norm=norm)
         lc.set_array(alpha_deg[:-1])
-        lc.set_linewidth(3)
-        ax.add_collection(lc)
+        lc.set_linewidth(3.5) 
+        
+        line = ax.add_collection(lc)
 
+       
         ax.set_xlim(x.min() - 20, x.max() + 20)
         ax.set_ylim(y.min() - 20, y.max() + 20)
         ax.set_aspect('equal')
-        ax.plot(x[0], y[0], 'o', color='#10b981', markersize=8, markeredgecolor='black') # Moderní zelená tečka
+        
+      
+        ax.plot(x[0], y[0], 'o', color='#10b981', markersize=8, markeredgecolor='black', zorder=5)
+        
+       
+        self.mpl_canvas.fig.subplots_adjust(right=0.85)
+        
+        cax = self.mpl_canvas.fig.add_axes([0.88, 0.15, 0.02, 0.7])
+        cb = self.mpl_canvas.fig.colorbar(line, cax=cax)
+        
+
+        cb.outline.set_visible(False) # Skrytí rámečku legendy
+        cb.set_label('Elevation [deg]', color='#64748b', size=10, labelpad=10)
+        cb.ax.yaxis.set_tick_params(colors='#64748b', labelsize=9)
+        
+        # Vypnutí os mapy
         ax.axis('off')
         
-        self.mpl_canvas.fig.tight_layout()
+        # Překreslení
         self.mpl_canvas.draw()
   
     # ==========================================
@@ -486,46 +510,71 @@ class MainWindow(QMainWindow):
     def on_compare_clicked(self):
         self.openCompareRequested.emit()
 
-    # ==========================================
-    # track generation wizard
-    # ==========================================
     def on_create_track_clicked(self):
-        fname, _ = QFileDialog.getOpenFileName(self, "select telemetry log", "", "MAT Files (*.mat)")
-        if not fname: return
+        from src.ui.track_generator_dialog import TrackGeneratorDialog
+        dialog = TrackGeneratorDialog(self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return  
+
+        fname = dialog.selected_file
+        is_closed_mode = dialog.radio_closed.isChecked()
+        r_penalty = dialog.spin_r.value()
+        w_penalty = dialog.spin_w.value()
+
+        if not fname:
+            return
 
         self.loading_overlay.show_loading("parsing log data...", indefinite=True)
         QApplication.processEvents()
 
         try:
-            data = TrackGenerator.filter_data(fname)
+            from src.handlers.telemetry_parser import filter_data
+            data = filter_data(fname)
         except Exception as e:
             self.loading_overlay.hide_loading()
             QMessageBox.critical(self, "error", f"failed to parse file:\n{e}")
             return
             
         self.loading_overlay.hide_loading()
-        if data is None: return
+        if data is None: 
+            return
 
-        msg = QMessageBox(self)
-        msg.setWindowTitle("select track mode")
-        msg.setText("How do you want to define the track?")
-        btn_closed = msg.addButton("closed track (endurance)", QMessageBox.ButtonRole.AcceptRole)
-        btn_open = msg.addButton("open section (autocross)", QMessageBox.ButtonRole.RejectRole)
-        msg.addButton(QMessageBox.StandardButton.Cancel)
-        msg.exec()
+        from src.ui.track_tools import run_lap_selector, manual_lap_selector
         
-        if msg.clickedButton() == msg.button(QMessageBox.StandardButton.Cancel): return
-        is_closed_mode = (msg.clickedButton() == btn_closed)
-
-        lap_info = None
+        # pass self as parent so dialogs center correctly over main window
         if is_closed_mode:
-            lap_info = TrackGenerator.run_lap_selector(data)
+            lap_infos = run_lap_selector(data, self)
         else:
-            lap_info = TrackGenerator.manual_lap_selector(data)
+            lap_infos = manual_lap_selector(data, self)
 
-        if not lap_info: return
+        if not lap_infos:
+            return 
 
-        default_name = f"track_{lap_info['time']:.2f}s.npz"
+        self.loading_overlay.show_loading("smoothing track (casadi)...", indefinite=True)
+        from src.handlers.requests import TrackGenerationRequest
+        
+        req = TrackGenerationRequest(
+            car_params=self._get_car_params(), 
+            ds=self.input_ds.value(),          
+            data=data,
+            lap_infos=lap_infos,
+            is_closed=is_closed_mode,
+            r_penalty=r_penalty,
+            w_penalty=w_penalty
+        )
+        self.controller.handle_request(req)
+
+    def finish_track_generation(self, result_data):
+        
+    
+        # show native pyqtgraph dialog instead of MapDRSEditor class
+        dialog = DRSEditorDialog(result_data['x'], result_data['y'], result_data['s'], self)
+        dialog.exec()
+        result_data['drs'] = dialog.get_mask()
+
+        avg_time = result_data.get('lap_time', 0.0)
+        default_name = f"track_{avg_time:.2f}s.npz"
+        
         save_path, _ = QFileDialog.getSaveFileName(
             self, "save baked track", 
             os.path.join("data/tracks", default_name), 
@@ -533,22 +582,17 @@ class MainWindow(QMainWindow):
         )
 
         if save_path:
-            self.loading_overlay.show_loading("smoothing track...", indefinite=True)
-            self.track_worker = TrackGenerationWorker(data, lap_info, is_closed_mode, save_path)
-            self.track_worker.finished.connect(self.on_track_generation_finished)
-            self.track_worker.start()
-
-    def on_track_generation_finished(self, success, message):
-        self.loading_overlay.hide_loading()
-        if success:
-            QMessageBox.information(self, "success", f"track saved successfully!\n{message}")
+            
+            np.savez(save_path, **result_data)
+            QMessageBox.information(self, "success", f"track saved successfully!\n{save_path}")
+            
             self.load_track_list()
-            track_name = os.path.splitext(os.path.basename(message))[0]
+            track_name = os.path.splitext(os.path.basename(save_path))[0]
             idx = self.combo_track.findText(track_name)
             if idx >= 0:
                 self.combo_track.setCurrentIndex(idx)
-        else:
-            QMessageBox.critical(self, "error", f"track generation failed:\n{message}")
+
+    
 
 
 
@@ -560,9 +604,9 @@ class CarConfigDialog(QDialog):
         
         self.setWindowTitle("Configure car")
         self.setModal(True) 
-        self.resize(360, 320) # Mírně zvětšeno pro lepší padding
+        self.resize(360, 320) 
 
-        # Aplikování stejného moderního stylu
+     
         if parent and hasattr(parent, 'styleSheet'):
             self.setStyleSheet(parent.styleSheet())
         
@@ -616,12 +660,12 @@ class CarConfigDialog(QDialog):
 
         layout.addLayout(form_layout)
 
-        # Spodní tlačítka s moderním vzhledem
+    
         self.button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
         self.button_box.accepted.connect(self.accept)
         self.button_box.rejected.connect(self.reject)
         
-        # Nastavení stylů pro defaultní dialogová tlačítka
+     
         save_btn = self.button_box.button(QDialogButtonBox.StandardButton.Save)
         cancel_btn = self.button_box.button(QDialogButtonBox.StandardButton.Cancel)
         

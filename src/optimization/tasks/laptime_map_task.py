@@ -2,7 +2,7 @@ import os
 import time
 import numpy as np
 from scipy.interpolate import griddata
-from src.optimization.solver import InitConditions
+from src.optimization.solvers.base_solver import InitConditions
 from .base_task import SimulationTask, SolverPayload
 
 class LaptimeMapTask(SimulationTask):
@@ -43,19 +43,22 @@ class LaptimeMapTask(SimulationTask):
                     E_start = np.round(self.car.acp_capacity * (1-soc), 2)
                     init_cond = InitConditions(v=self.track.speed[0]-2, T=0.0, E=E_start)
                     
-                    res = self.solver.solveLap_rk4(init_cond=init_cond, ds=self.ds, init_guess=prev_res)
+                    res = self.solver.solve(init_cond=init_cond, ds=self.ds, init_guess=prev_res)
                     
                     if res.success:
                         laptime = res.lap_time
                         flat_lap_times.append(laptime)
-                        prev_res = res
+                        prev_res = {
+                            'v': res.v,
+                            'F_acc': res.f_acc 
+                        }
                         if laptime > last_slowest_lap:
                             last_slowest_lap = laptime
 
                         res.meta_soc = soc
                         res.meta_energy = e_target
                         res.meta_regen = regen
-                        res.meta_mass = self.car.mass
+                        res.meta_mass = self.car.weight
                         results_log.append(res)
                     else:
                         flat_lap_times.append(np.nan) 

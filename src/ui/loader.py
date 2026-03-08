@@ -10,7 +10,7 @@ class LoadingOverlay(QWidget):
         
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
      
-        # Poloprůhledné černé pozadí
+       
         self.setObjectName("LoadingOverlay")
         self.setStyleSheet("""
             QWidget#LoadingOverlay {
@@ -26,23 +26,23 @@ class LoadingOverlay(QWidget):
         layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.setSpacing(20) # Mezera mezi GIFem a textem
         
-        # --- 1. GIF LABEL ---
+        # gif label
         self.lbl_gif = QLabel()
         self.lbl_gif.setAlignment(Qt.AlignmentFlag.AlignCenter)
      
-        gif_path = "data/vejsi_loading.gif" 
+        gif_path = "data/loading3.gif" 
         self.movie = QMovie(gif_path)
      
         self.movie.setScaledSize(QSize(300, 300)) 
         self.movie.finished.connect(self.movie.start)
         self.lbl_gif.setMovie(self.movie)
         
-        # --- 2. TEXT LABEL ---
+        # text label
         self.lbl_text = QLabel("Calculating...")
         self.lbl_text.setStyleSheet("color: white; font-size: 18px; font-weight: bold;")
         self.lbl_text.setAlignment(Qt.AlignmentFlag.AlignCenter)
         
-        # --- 3. PROGRESS BAR 
+        # progress bar
         self.progress = QProgressBar()
         self.progress.setFixedWidth(300)
         self.progress.setTextVisible(True)
@@ -61,7 +61,7 @@ class LoadingOverlay(QWidget):
             }
         """)
         
-        # Přidání do layoutu
+       
         layout.addWidget(self.lbl_gif)   # GIF nahoře
         layout.addWidget(self.lbl_text)  # Text uprostřed
         layout.addWidget(self.progress)  # Bar dole
@@ -72,7 +72,7 @@ class LoadingOverlay(QWidget):
 
     def show_loading(self, text="Calculating...", indefinite=True, progress_text_fmt=None):
         """
-        Zobrazí overlay.
+        shows overlay
         Args:
             text: Úvodní text.
             indefinite: 
@@ -91,16 +91,16 @@ class LoadingOverlay(QWidget):
             self.current_progress_fmt = f"{text} ({{}} / {{}})"
 
         if indefinite:
-            # --- REŽIM GIF (Točící se kolečko / Animace) ---
-            self.progress.hide()       # Schováme progress bar
-            self.lbl_gif.show()        # Ukážeme GIF
-            self.movie.start()         # Spustíme animaci
+            # gif 
+            self.progress.hide()      
+            self.lbl_gif.show()        
+            self.movie.start()        
         else:
-            # --- REŽIM PROGRESS BAR (Endurance) ---
-            self.lbl_gif.hide()        # Schováme GIF (nebo ho necháme, pokud chceš obojí)
-            self.movie.stop()          # Zastavíme animaci (šetří CPU)
+            # progress bar
+            self.lbl_gif.hide()       
+            self.movie.stop()          
             
-            self.progress.show()       # Ukážeme progress bar
+            self.progress.show()       
             self.progress.setRange(0, 100)
             self.progress.setValue(0)
 
@@ -108,7 +108,7 @@ class LoadingOverlay(QWidget):
         self.raise_()
 
     def update_progress(self, current, total):
-        # ... (Tato metoda zůstává stejná jako předtím) ...
+       
         if self.current_progress_fmt:
             try:
                 self.lbl_text.setText(self.current_progress_fmt.format(current, total))
@@ -123,5 +123,5 @@ class LoadingOverlay(QWidget):
         self.progress.setValue(current)
 
     def hide_loading(self):
-        self.movie.stop() # Důležité: zastavit GIF při skrytí
+        self.movie.stop() 
         self.hide()

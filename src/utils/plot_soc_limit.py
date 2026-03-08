@@ -14,7 +14,7 @@ def get_recuperation_limit(SoC_ca):
     """
     """
     P_max = 40e3      # 40 kW limit
-    soc_mid = 0.885   # Kde křivka protíná 20 kW
+    soc_mid = 0.885   
     k = 120.0         # Strmost poklesu
     
     return P_max / (1.0 + ca.exp(k * (SoC_ca - soc_mid)))

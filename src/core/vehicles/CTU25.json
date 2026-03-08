@@ -8,10 +8,11 @@
     "cop": 0.53,
     "power_limit": 80.0,
     "regen_eff": 0.8,
-    "laps": 18,
-    "ds": 0.95,
+    "laps": 24,
+    "ds": 1.0,
     "model_type": "mass_point_rk4",
-    "energy_limit": null,
-    "drs_allowed": false,
-    "soc_start": 1.0
+    "energy_limit": 0.3,
+    "drs_allowed": true,
+    "soc_start": 0.76,
+    "name": "CTU25"
 }

@@ -100,6 +100,7 @@ classDiagram
 
 ```mermaid
 
+
 stateDiagram-v2
     [*] --> Idle: Application waits for user
 
@@ -112,7 +113,6 @@ stateDiagram-v2
     state "Controller Layer (Assembly)" as Controller {
         SendRequest --> AssembleCar: Initialize Car() from req.car_params
         AssembleCar --> Routing: What type of Request is it?
-        
         Routing --> CreateSingleTask: type(req) is SingleLapRequest
         Routing --> CreateLapMapTask: type(req) is LapMapTestRequest
         Routing --> CreateStrategyTask: type(req) is StrategyOptRequest

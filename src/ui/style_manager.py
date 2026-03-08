@@ -128,20 +128,20 @@ class StyleManager:
                 height: 14px;
             }
             
-            QDoubleSpinBox::up-button, QDoubleSpinBox::down-button {
+            QSpinBox,QDoubleSpinBox::up-button, QDoubleSpinBox::down-button {
                 background-color: #f1f5f9; 
                 border-left: 1px solid #cbd5e1; 
                 width: 24px; 
             }
-            QDoubleSpinBox::up-button { border-top-right-radius: 4px; }
-            QDoubleSpinBox::down-button {
+            QSpinBox,QDoubleSpinBox::up-button { border-top-right-radius: 4px; }
+            QSpinBox,QDoubleSpinBox::down-button {
                 border-bottom-right-radius: 4px;
                 border-top: 1px solid #cbd5e1;
             }
-            QDoubleSpinBox::up-button:hover, QDoubleSpinBox::down-button:hover { background-color: #e2e8f0; }
-            QDoubleSpinBox::up-button:pressed, QDoubleSpinBox::down-button:pressed { background-color: #cbd5e1; }
-            QDoubleSpinBox::up-arrow { image: url("data/icons/up_arrow.svg"); width: 12px; height: 12px; }
-            QDoubleSpinBox::down-arrow { image: url("data/icons/down_arrow.svg"); width: 12px; height: 12px; }
+            QSpinBox,QDoubleSpinBox::up-button:hover, QDoubleSpinBox::down-button:hover { background-color: #e2e8f0; }
+            QSpinBox,QDoubleSpinBox::up-button:pressed, QDoubleSpinBox::down-button:pressed { background-color: #cbd5e1; }
+            QSpinBox,QDoubleSpinBox::up-arrow { image: url("data/icons/up_arrow.svg"); width: 12px; height: 12px; }
+            QSpinBox,QDoubleSpinBox::down-arrow { image: url("data/icons/down_arrow.svg"); width: 12px; height: 12px; }
 
             /* --- CHECKBOXY --- */
             QCheckBox { font-size: 10pt; color: #334155; spacing: 8px; }

@@ -1,17 +1,18 @@
 from PyQt6.QtCore import QObject, pyqtSignal
 from src.core.car import Car
 from src.core.track import Track
-from src.optimization.solver import MassPointSolver, SingleTrackSolver, StrategyMaker
+from src.optimization.solvers import MassPointSolver, StrategyMaker
+from src.optimization.solvers import InitConditions, calculate_initial_guess
 from src.optimization.work_thread import SimulationWorker
 
 # import tasks
-from src.optimization.tasks import SingleLapTask, LaptimeMapTask, StrategyOptTask, DeploymentOptTask
+from src.optimization.tasks import SingleLapTask, LaptimeMapTask, StrategyOptTask, DeploymentOptTask, TrackGenerationTask
 
 
 # import requests
 from src.handlers.requests import (
     SingleLapRequest, EnduranceRequest, LapMapTestRequest, 
-    StrategyOptRequest, DeploymentOptRequest
+    StrategyOptRequest, DeploymentOptRequest, TrackGenerationRequest
 )
 
 class SimulationController(QObject):
@@ -26,13 +27,11 @@ class SimulationController(QObject):
         self.active_worker = None
 
     def _create_solver(self, car: Car, track: Track, laps: int):
-        # helper method to build the right solver based on car configuration
-        if car.model_type == "single_track":
-            return SingleTrackSolver(car, track, laps=laps)
-        elif car.model_type == "mass_point_rk4":
-            return MassPointSolver(car, track, rk4=True, laps=laps)
+       
+        if car.model_type == "mass_point_rk4":
+            return MassPointSolver(car, track)
         else:
-            return MassPointSolver(car, track, rk4=False, laps=laps)
+            return MassPointSolver(car, track)
 
     def handle_request(self, req):
         # single entry point for all incoming simulation requests
@@ -59,6 +58,12 @@ class SimulationController(QObject):
                 track = Track.load(req.track_name)
                 solver = self._create_solver(car, track, laps=req.laps)
                 task = LaptimeMapTask(solver, car, track, req.ds, req.laps)
+
+            elif isinstance(req, TrackGenerationRequest):
+                # track generation task doesnt use the car object
+                task = TrackGenerationTask(
+                    req.data, req.lap_infos, req.is_closed, req.r_penalty, req.w_penalty
+                )
 
             elif isinstance(req, (StrategyOptRequest, DeploymentOptRequest)):
                 # update car with strategy specific modifiers

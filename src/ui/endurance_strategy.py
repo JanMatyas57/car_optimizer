@@ -22,16 +22,16 @@ class MapTab(QWidget):
         
         main_layout = QVBoxLayout(self) 
         
-        # Matplotlib Canvas 
+        # matplotlib canvas 
         self.fig = Figure(figsize=(8, 6), dpi=100)
-        self.fig.patch.set_facecolor('#ffffff') # Bílé pozadí pro moderní look
+        self.fig.patch.set_facecolor('#ffffff') # white background for modern look
         self.canvas = FigureCanvasQTAgg(self.fig)
                 
         content_layout = QHBoxLayout()
         self.canvas.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         content_layout.addWidget(self.canvas, stretch=1)
         
-        # --- Slider ---
+        # --- slider ---
         slider_layout = QVBoxLayout() 
         self.lbl_slider = QLabel("")
         self.lbl_slider.setAlignment(Qt.AlignmentFlag.AlignCenter) 
@@ -59,7 +59,7 @@ class MapTab(QWidget):
         content_layout.addLayout(slider_layout)
         main_layout.addLayout(content_layout)
         
-        # Camera default view
+        # camera default view
         self.ax3d = None
         self.view_elev = 20
         self.view_azim = 30
@@ -111,22 +111,22 @@ class MapTab(QWidget):
         
         self.ax3d.set_zlim(self.z_min, self.z_max)
         
-        # Sjednocení stylu fontů - odstranění bold a úprava barev
+        # font style unification - removing bold and adjusting colors
         self.ax3d.set_xlabel('Energy target [kWh]', color='#475569', fontweight='normal')
         self.ax3d.set_ylabel(y_label, color='#475569', fontweight='normal')
         self.ax3d.set_zlabel('Lap time [s]', color='#475569', fontweight='normal')
         
-        # Title bez bold, stejná barva jako u výsledků
+        # title without bold, same color as results
         self.ax3d.set_title(title, color='#475569', fontweight='normal', pad=15)
         
-        # Stylování čísel na osách (ticks)
+        # styling axis ticks
         self.ax3d.xaxis.set_tick_params(colors='#64748b')
         self.ax3d.yaxis.set_tick_params(colors='#64748b')
         self.ax3d.zaxis.set_tick_params(colors='#64748b')
         
         self.ax3d.view_init(elev=self.view_elev, azim=self.view_azim)
         
-        # Optimalizace okrajů, aby graf nebyl zbytečně malý
+        # margin optimization so the graph is not unnecessarily small
       # self.fig.subplots_adjust(left=0.0, right=1.0, bottom=0.0, top=0.95)
         self.canvas.draw_idle()
 
@@ -140,7 +140,7 @@ class LaptimeAppMainWindow(QWidget):
         self.setWindowTitle("Endurance strategy")
 
         self.setStyleSheet("""
-            /* Nastavíme pozadí jen pro hlavní okno a čisté kontejnery */
+            /* set background for main window and clean containers only */
             LaptimeAppMainWindow, .QWidget {
                 font-family: 'Segoe UI', system-ui, sans-serif;
                 font-size: 10pt;
@@ -148,7 +148,7 @@ class LaptimeAppMainWindow(QWidget):
                 background-color: #f8f9fa;
             }
             
-            /* --- TLAČÍTKA --- */
+            /* --- buttons --- */
             QPushButton {
                 font-family: 'Segoe UI', system-ui, sans-serif;
                 font-size: 10pt;
@@ -158,13 +158,13 @@ class LaptimeAppMainWindow(QWidget):
                 color: white;
                 border: none;
             }
-            QPushButton#BtnCompare { background-color: #3b82f6; } /* Modrá */
+            QPushButton#BtnCompare { background-color: #3b82f6; } /* blue */
             QPushButton#BtnCompare:hover { background-color: #2563eb; }
             
-            QPushButton#BtnRunSingle { background-color: #10b981; } /* Zelená */
+            QPushButton#BtnRunSingle { background-color: #10b981; } /* green */
             QPushButton#BtnRunSingle:hover { background-color: #059669; }
 
-            /* --- KONTEJNERY A ZÁLOŽKY --- */
+            /* --- containers and tabs --- */
             QGroupBox {
                 background-color: #ffffff;
                 border: 1px solid #e2e8f0;
@@ -206,7 +206,7 @@ class LaptimeAppMainWindow(QWidget):
         self.loading_overlay = LoadingOverlay(self)
         self.map_data = self.load_data(filepath)
         
-        # --- DYNAMICKÁ VELIKOST OKNA ---
+        # --- dynamic window size ---
         screen = QGuiApplication.primaryScreen()
         available_geometry = screen.availableGeometry()
 
@@ -216,7 +216,7 @@ class LaptimeAppMainWindow(QWidget):
         target_width = int(screen_width * 0.85)
         target_height = int(screen_height * 0.90)
 
-        # Naše nové limity pro 2K monitory
+        # our new limits for 2k monitors
         target_width = min(target_width, 1600)
         target_height = min(target_height, 1200)
 
@@ -229,24 +229,24 @@ class LaptimeAppMainWindow(QWidget):
         main_layout.setContentsMargins(15, 15, 15, 15)
         main_layout.setSpacing(15)
         
-        # --- Ovládací Panel ---
+        # --- control panel ---
         control_group = QGroupBox("Optimization Settings")
-        control_group.setObjectName("HighlightedGroup") # Aplikace šedého podkladu
+        control_group.setObjectName("HighlightedGroup") # application of grey background
         control_layout = QHBoxLayout()
         control_layout.setContentsMargins(15, 10, 15, 15)
         
-        # Napojení tlačítek na globální barvy přes ID
+        # connecting buttons to global colors via id
         self.btn_optimize = QPushButton("Calculate optimal energy map")
-        self.btn_optimize.setObjectName("BtnCompare") # Modrá z globálního CSS
+        self.btn_optimize.setObjectName("BtnCompare") # blue from global css
         self.btn_optimize.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_optimize.clicked.connect(self.run_optimization)
 
         self.btn_deploy = QPushButton("Calculate deployment for given inputs")
-        self.btn_deploy.setObjectName("BtnRunSingle") # Zelená z globálního CSS
+        self.btn_deploy.setObjectName("BtnRunSingle") # green from global css
         self.btn_deploy.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_deploy.clicked.connect(self.run_deployment)
         
-        # Inputs
+        # inputs
         lbl_regen = QLabel("Recuperation [%]:")
         lbl_regen.setStyleSheet("font-weight: bold;")
         self.spin_regen = QDoubleSpinBox()
@@ -273,7 +273,7 @@ class LaptimeAppMainWindow(QWidget):
         control_group.setLayout(control_layout)
         main_layout.addWidget(control_group)
         
-        # --- Záložky ---
+        # --- tabs ---
         self.tabs = QTabWidget()
         
         if self.map_data:
@@ -303,7 +303,7 @@ class LaptimeAppMainWindow(QWidget):
             shape_3d = (len(soc_targets), len(e_targets), len(regen_targets))
             lap_times_3d = flat_lap_times.reshape(shape_3d)
             
-            # Outlier filter
+            # outlier filter
             smoothed_3d = median_filter(lap_times_3d, size=3)
             diff = np.abs(lap_times_3d - smoothed_3d)
             outliers_mask = diff > 5.0
@@ -389,7 +389,7 @@ class StrategyResultTab(QWidget):
         
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(15, 15, 15, 15)
-        main_layout.setSpacing(10) # Rozestup mezi summary a grafem
+        main_layout.setSpacing(10) # gap between summary and graph
         
         if not self.res_opt.get("success", False):
             error_lbl = QLabel("Optimization failed for these specific inputs. Try different values.")
@@ -397,7 +397,7 @@ class StrategyResultTab(QWidget):
             main_layout.addWidget(error_lbl)
             return
 
-        # --- 1. Summary ---
+        # --- 1. summary ---
         summary_container = QWidget()
         summary_container.setStyleSheet("""
             background-color: #f1f5f9; 
@@ -407,7 +407,7 @@ class StrategyResultTab(QWidget):
         summary_layout = QHBoxLayout(summary_container)
         summary_layout.setContentsMargins(20, 20, 20, 20)
         
-        # ... (výpočet total_time, points atd. zůstává stejný jako ve tvém kódu) ...
+        # ... calculation of total_time, points etc. remains the same ...
         total_time = self.res_opt['total_time']
         points = self.res_opt['points']
         total_energy = sum(self.res_opt['e_targets'])
@@ -449,11 +449,11 @@ class StrategyResultTab(QWidget):
         
         main_layout.addWidget(summary_container)
         
-        # --- 2. Matplotlib grafy ---
+        # --- 2. matplotlib graphs ---
         self.fig = Figure(figsize=(10, 8), dpi=100)
         self.fig.patch.set_facecolor('#ffffff') 
         self.canvas = FigureCanvasQTAgg(self.fig)
-        # Toolbar jsme odstranili
+        # toolbar removed
         
         graph_container = QWidget()
         graph_container.setObjectName("CanvasContainer")
@@ -472,7 +472,7 @@ class StrategyResultTab(QWidget):
         
         has_full_soc = self.res_full.get("success", False)
         
-        # --- LAP TIMES ---
+        # --- lap times ---
         ax1 = self.fig.add_subplot(2, 1, 1)
         ax1.plot(laps, opt_lap_times, marker='o', color='#3b82f6', linewidth=2.5, markersize=7, label='Optimal SoC Start')
         
@@ -485,11 +485,11 @@ class StrategyResultTab(QWidget):
         ax1.tick_params(axis='x', labelcolor='#475569')
         ax1.set_xticks(laps)
         ax1.grid(True, linestyle='--', alpha=0.3)
-        # Bold odstraněn, barva zjemněna
+        # bold removed, color softened
         ax1.set_title('Lap Times Evolution', color='#475569', fontweight='normal', pad=15)
         ax1.legend(frameon=True, edgecolor='#e2e8f0', loc='best')
 
-        # --- ENERGY ---
+        # --- energy ---
         ax2 = self.fig.add_subplot(2, 1, 2, sharex=ax1)
         ax2.plot(laps, opt_e_targets, marker='s', color='#10b981', linewidth=2.5, markersize=6, label='Optimal SoC Start')
         
@@ -502,11 +502,11 @@ class StrategyResultTab(QWidget):
         ax2.tick_params(axis='y', labelcolor='#475569')
         ax2.tick_params(axis='x', labelcolor='#475569')
         ax2.grid(True, linestyle='--', alpha=0.3)
-        # Bold odstraněn, barva zjemněna
+        # bold removed, color softened
         ax2.set_title('Energy Deployment per Lap', color='#475569', fontweight='normal', pad=15)
         ax2.legend(frameon=True, edgecolor='#e2e8f0', loc='best')
 
-        # Klíč k úspěchu: tight_layout s h_pad definuje vertikální mezery mezi grafy
+        # key to success: tight_layout with h_pad defines vertical gaps between graphs
         self.fig.tight_layout(pad=3.0, h_pad=4.0) 
         self.canvas.draw()
 
@@ -526,20 +526,20 @@ class OptimalEnergyMapTab(QWidget):
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(15, 15, 15, 15)
         
-        # --- Matplotlib Canvas ---
+        # --- matplotlib canvas ---
         self.fig = Figure(figsize=(8, 6), dpi=100)
         self.fig.patch.set_facecolor('#ffffff')
         self.canvas = FigureCanvasQTAgg(self.fig)
         self.canvas.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
        #elf.toolbar = NavigationToolbar2QT(self.canvas, self)
         
-        # --- Controls (Postranní panel vlevo) ---
+        # --- controls (side panel left) ---
         control_panel = QWidget()
-        control_panel.setFixedWidth(260) # Pevná šířka, zbytek se dá grafu
+        control_panel.setFixedWidth(260) # fixed width, rest given to graph
         control_layout = QVBoxLayout(control_panel)
         control_layout.setContentsMargins(0, 10, 15, 10)
         
-        # Výpis (Moderní karta)
+        # output (modern card)
         self.lbl_opt_energy = QLabel("Optimal energy:\n-- kWh\n\nOptimal SoC start:\n-- %")
         self.lbl_opt_energy.setStyleSheet("""
             font-size: 15px; 
@@ -551,10 +551,10 @@ class OptimalEnergyMapTab(QWidget):
         """)
         self.lbl_opt_energy.setAlignment(Qt.AlignmentFlag.AlignCenter)
         
-        # Vertikální slidery vedle sebe
+        # vertical sliders side by side
         sliders_layout = QHBoxLayout()
         
-        # Regen Slider
+        # regen slider
         regen_vbox = QVBoxLayout()
         self.lbl_regen = QLabel("Regen:\n0 %")
         self.lbl_regen.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -569,7 +569,7 @@ class OptimalEnergyMapTab(QWidget):
         regen_vbox.addWidget(self.lbl_regen)
         regen_vbox.addWidget(self.slider_regen, alignment=Qt.AlignmentFlag.AlignHCenter)
         
-        # Delta Slider
+        # delta slider
         delta_vbox = QVBoxLayout()
         self.lbl_delta = QLabel("Delta:\n0 %")
         self.lbl_delta.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -591,14 +591,14 @@ class OptimalEnergyMapTab(QWidget):
         control_layout.addSpacing(20)
         control_layout.addLayout(sliders_layout)
         
-        # --- Hlavní sestavení kontejneru s grafem ---
+        # --- main container assembly with graph ---
         graph_container = QWidget()
         graph_container.setObjectName("CanvasContainer")
         graph_main_layout = QVBoxLayout(graph_container)
         
         #raph_main_layout.addWidget(self.toolbar)
         
-        # Rozdělení: Levý panel s ovládáním, pravá část obří graf
+        # splitting: left panel with control, right part giant graph
         content_layout = QHBoxLayout()
         content_layout.addWidget(control_panel)
         content_layout.addWidget(self.canvas, stretch=1) 
@@ -647,14 +647,14 @@ class OptimalEnergyMapTab(QWidget):
 
         self.ax3d.view_init(elev=self.view_elev, azim=self.view_azim)
         
-        # Agresivnější zmenšení okrajů Matplotlibu pro větší využití plochy
+        # more aggressive margin reduction for matplotlib to utilize more space
         self.fig.subplots_adjust(left=0.0, right=0.95, bottom=0.05, top=0.95)
 
     def update_point(self):
         regen_val = self.slider_regen.value() / 100.0
         delta_val = self.slider_delta.value() / 100.0
         
-        # Přidány nové řádky (\n) aby text nad vertikálním sliderem vypadal dobře
+        # added new lines (\n) so text above vertical slider looks good
         self.lbl_regen.setText(f"Regen:\n{regen_val*100:.0f} %")
         self.lbl_delta.setText(f"Delta:\n{delta_val*100:.0f} %")
 

@@ -5,6 +5,7 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QTreeWidget, QTreeWidgetItem,
                              QLabel, QHeaderView, QPushButton, QMessageBox, QHBoxLayout)
 from PyQt6.QtCore import Qt
 from src.ui.compare_results import ComparisonPlotWindow
+import json
 
 class CompareWindow(QWidget):
     def __init__(self):
@@ -38,37 +39,42 @@ class CompareWindow(QWidget):
                 outline: none;
             }
 
-            /* Jemný modrý border při focusu */
-            QTreeWidget:focus {
-                border: 1px solid #3b82f6;
-            }
-
             QTreeWidget::item {
                 padding: 10px;
                 border-bottom: 1px solid #f1f5f9;
                 color: #334155;
             }
             
-            /* Moderní selection bez systémové modré */
+            /* Hover efekt */
+            QTreeWidget::item:hover {
+                background-color: #f8fafc;
+            }
+
+           /* Moderní selection s trvalým okrajem nahoře a dole */
             QTreeWidget::item:selected {
-                background-color: #eff6ff; 
+                background-color: #eff6ff;
                 color: #2563eb;            
                 outline: none;
+                border-top: 1px solid #3b82f6;
+                border-bottom: 1px solid #3b82f6;
             }
             
-            /* Stav kdy okno není aktivní */
+            /* Aby řádek zůstal stejně zvýrazněný, i když klikneš jinam (ztratí focus) */
             QTreeWidget::item:selected:!active {
-                background-color: #f8fafc;
-                color: #64748b;
+                background-color: #eff6ff;
+                color: #2563eb;
+                outline: none;
+                border-top: 1px solid #3b82f6;
+                border-bottom: 1px solid #3b82f6;
             }
 
             QHeaderView::section {
-                background-color: #f8f9fa;
+                background-color: #ffffff;
                 padding: 10px;
                 border: none;
-                border-bottom: 2px solid #e2e8f0;
+                border-bottom: 2px solid #3b82f6;
                 font-weight: bold;
-                color: #475569;
+                color: #1e293b;
             }
             
             /* --- TLAČÍTKA --- */
@@ -92,6 +98,26 @@ class CompareWindow(QWidget):
             QPushButton#BtnCompare:hover {
                 background-color: #2563eb;
             }
+            
+            /* --- CHECKBOXY V TABULCE --- */
+            /* Snažíme se vnutit větší velikost, občas Qt ignoruje width/height, 
+               tak zkusíme margin a padding */
+            QTreeWidget::indicator {
+                width: 18px;
+                height: 18px;
+                border-radius: 4px;
+                border: 2px solid #cbd5e1; 
+                background-color: #ffffff;
+            }
+            QTreeWidget::indicator:hover {
+                border-color: #3b82f6;
+            }
+            QTreeWidget::indicator:checked {
+                background-color: #3b82f6;
+                border-color: #3b82f6;
+                /* Pokud by fajfka zmizela, přidáme ji pomocí base64 nebo cesty: */
+                /* image: url("data/icons/check.png"); */
+            }
         """)
         
         layout = QVBoxLayout(self)
@@ -110,17 +136,21 @@ class CompareWindow(QWidget):
         # 2. Table (TreeWidget)
         self.tree = QTreeWidget()
         self.tree.setHeaderLabels(["Track Name", "Lap Time (s)", "Car Config", "File / Date"])
-        self.tree.setIndentation(10)
+      
+        self.tree.setIndentation(15) 
+        self.tree.setAlternatingRowColors(False) 
         
         header = self.tree.header()
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
-        
-        # VYPNUTO: Už žádné střídavé barvy, které by si systém mohl obarvit po svém
-        self.tree.setAlternatingRowColors(False)
+
         self.tree.setRootIsDecorated(False) 
+        
+     
+        self.tree.setIconSize(self.tree.iconSize() * 1.5)
+
         layout.addWidget(self.tree)
         
         # 3. Buttons Area
@@ -162,17 +192,26 @@ class CompareWindow(QWidget):
                     track_name = str(data['track_name']) if 'track_name' in data else "Unknown"
                     lap_time = float(data['lap_time']) if 'lap_time' in data else 0.0
                     
-                    # CAR CONFIG LOGIKA:
-                    # Pokud v budoucnu přidáš do npz 'car_config' (např. string s aero nastavením), 
-                    # zobrazí se přednostně, jinak jen jméno.
-                    car_config = str(data['car_config']) if 'car_config' in data else str(data.get('car_name', '-'))
+                  
+                    car_name = "Unknown"
+                    if 'car_config' in data:
+                        raw_config = data['car_config']
+                        if hasattr(raw_config, 'item'):
+                            raw_config = raw_config.item()
+                            
+                        try:
+                            car_dict = json.loads(str(raw_config))
+                            
+                            car_name = car_dict.get('name', "Unknown")
+                        except Exception:
+                            pass
                     
                     filename = os.path.basename(filepath)
                     
                     logs_data.append({
                         'track': track_name,
                         'time': lap_time,
-                        'car': car_config,
+                        'car': car_name,
                         'file': filename,
                         'path': filepath
                     })
@@ -193,16 +232,11 @@ class CompareWindow(QWidget):
             row.setCheckState(0, Qt.CheckState.Unchecked)
             row.setData(0, Qt.ItemDataRole.UserRole, item['path'])
             
-            # Vynutíme transparentní background, aby neprosvítala systémová barva
-            for col in range(self.tree.columnCount()):
-                row.setBackground(col, Qt.GlobalColor.transparent)
-            
             self.tree.addTopLevelItem(row)
 
         self.tree.setCurrentItem(None)
 
     def on_compare_clicked(self):
-        # ... (zbytek logiky zůstává stejný)
         selected_data = []
         track_names_set = set()
         

@@ -1,6 +1,5 @@
 === STRUKTURA PROJEKTU ===
 - architecure.md
-- config.json
 - main.py
 - pack.py
 - src\core\car.py
@@ -10,14 +9,22 @@
 - src\core\vehicles\CTU25.json
 - src\core\vehicles\CTU26.json
 - src\core\vehicles\CTU27.json
+- src\core\vehicles\CTU28.json
 - src\core\vehicles\default_car.json
 - src\handlers\controller.py
 - src\handlers\requests.py
+- src\handlers\telemetry_parser.py
 - src\handlers\__init___.py
-- src\optimization\solver.py
 - src\optimization\track_generation_thread.py
 - src\optimization\work_thread.py
 - src\optimization\__init__.py
+- src\optimization\solvers\base_solver.py
+- src\optimization\solvers\init_guess.py
+- src\optimization\solvers\mass_point.py
+- src\optimization\solvers\mpcc.py
+- src\optimization\solvers\single_track.py
+- src\optimization\solvers\strategy_maker.py
+- src\optimization\solvers\__init__.py
 - src\optimization\tasks\base_task.py
 - src\optimization\tasks\laptime_map_task.py
 - src\optimization\tasks\single_lap.py
@@ -32,9 +39,11 @@
 - src\ui\results_window.py
 - src\ui\sensitivity_plot.py
 - src\ui\style_manager.py
+- src\ui\track_generator_dialog.py
+- src\ui\track_tools.py
 - src\ui\__init__.py
 - src\utils\config_manager.py
-- src\utils\drs_69.py
+- src\utils\plot_drs.py
 - src\utils\plot_soc_limit.py
 - src\utils\regen_model.py
 - src\utils\saver.py
@@ -145,6 +154,7 @@ classDiagram
 
 ```mermaid
 
+
 stateDiagram-v2
     [*] --> Idle: Application waits for user
 
@@ -157,7 +167,6 @@ stateDiagram-v2
     state "Controller Layer (Assembly)" as Controller {
         SendRequest --> AssembleCar: Initialize Car() from req.car_params
         AssembleCar --> Routing: What type of Request is it?
-        
         Routing --> CreateSingleTask: type(req) is SingleLapRequest
         Routing --> CreateLapMapTask: type(req) is LapMapTestRequest
         Routing --> CreateStrategyTask: type(req) is StrategyOptRequest
@@ -193,25 +202,6 @@ stateDiagram-v2
     HideLoading --> Idle
 ```
 --- KONEC SOUBORU: architecure.md ---
-
---- ZAČÁTEK SOUBORU: config.json ---
-{
-    "mu_x": 1.25,
-    "mu_y": 1.25,
-    "acp_capacity": 6.0,
-    "mass": 275.0,
-    "cd": 1.83,
-    "cl": 5.64,
-    "power_limit": 80.0,
-    "regen_eff": 0.8,
-    "soc_start": 1.0,
-    "laps": 17,
-    "ds": 0.5,
-    "model_type": "mass_point",
-    "energy_limit": null,
-    "drs_allowed": true
-}
---- KONEC SOUBORU: config.json ---
 
 --- ZAČÁTEK SOUBORU: main.py ---
 import os
@@ -449,6 +439,7 @@ import casadi as ca
 @dataclass
 class Car:
     # --- 1. Parameters from UI ---
+    name: str
     weight: float           # [kg]
     cd: float             # [-] 
     cl: float             # [-]
@@ -934,7 +925,7 @@ class Track:
     def get_drs_flag(self, s_var):
         
         if self.drs_interp is None:
-            # Pokud trať nemá DRS, vracíme 0 (funguje pro scalar i CasADi vector)
+            
             if isinstance(s_var, (ca.MX, ca.SX)):
                 return ca.DM.zeros(s_var.shape)
             return 0.0
@@ -944,194 +935,56 @@ class Track:
 
 --- ZAČÁTEK SOUBORU: src\core\trackGenerator.py ---
 import numpy as np
-import scipy.io
-import matplotlib.pyplot as plt
 import casadi as ca
-from scipy.signal import find_peaks
 from scipy.interpolate import PchipInterpolator, interp1d
-from matplotlib.widgets import SpanSelector
 
-# ==========================================
-# 1. OPTIMIZATION & SMOOTHING CLASS
-# ==========================================
+def latlon_to_meters(lat, lon):
+    """Převede lat/lon na metry (lokální ENU s počátkem v prvním bodě)."""
+    lat_rad, lon_rad = np.radians(lat), np.radians(lon)
+    lat0, lon0 = lat_rad[0], lon_rad[0]
+    R = 6371000 
+    x = R * (lon_rad - lon0) * np.cos(lat0)
+    y = R * (lat_rad - lat0)
+    return x, y
 
 class TrackGenerator:
     @staticmethod
-    def smooth_track(x_smpl, y_smpl, z_smpl, ds=0.05, r=1000, is_closed=True):
-        x_smpl = np.array(x_smpl).flatten()
-        y_smpl = np.array(y_smpl).flatten()
-        z_smpl = np.array(z_smpl).flatten()
-        
-        dx = np.diff(x_smpl)
-        dy = np.diff(y_smpl)
-        ds_tmp = np.sqrt(dx**2 + dy**2)
-        s_tmp = np.concatenate(([0], np.cumsum(ds_tmp)))
+    def smooth_track(x_smpl, y_smpl, z_smpl, ds=0.1, w_pos=50.0, r=3000, is_closed=True):
+        """Vyhladi trajektorii pomocí CasADi RK4 integrátoru."""
+        x_smpl, y_smpl, z_smpl = np.array(x_smpl).flatten(), np.array(y_smpl).flatten(), np.array(z_smpl).flatten()
+        dx, dy = np.diff(x_smpl), np.diff(y_smpl)
+        s_tmp = np.concatenate(([0], np.cumsum(np.sqrt(dx**2 + dy**2))))
         
         total_length = s_tmp[-1]
-        N = int(np.round(total_length / ds))
-        if N < 2: N = 2 
+        N = max(2, int(np.round(total_length / ds)))
         ds_real = total_length / N
         s_traj = np.linspace(0, total_length, N) 
         
-        # Initial Interpolation
-        fx = PchipInterpolator(s_tmp, x_smpl)
-        fy = PchipInterpolator(s_tmp, y_smpl)
-        fz = PchipInterpolator(s_tmp, z_smpl)
-        x_init = fx(s_traj)
-        y_init = fy(s_traj)
-        z_init = fz(s_traj)
+        fx, fy, fz = PchipInterpolator(s_tmp, x_smpl), PchipInterpolator(s_tmp, y_smpl), PchipInterpolator(s_tmp, z_smpl)
+        x_init, y_init, z_init = fx(s_traj), fy(s_traj), fz(s_traj)
         
-        # Init alpha, theta, C
         dz_init = np.diff(z_init) / ds_real
-        alpha_init = np.arcsin(np.clip(dz_init, -0.2, 0.2))
-        alpha_init = np.append(alpha_init, alpha_init[-1])
+        alpha_init = np.append(np.arcsin(np.clip(dz_init, -0.2, 0.2)), 0) # Doplnění posledního bodu
+        alpha_init[-1] = alpha_init[-2]
 
         th_init = np.unwrap(np.arctan2(np.diff(y_init), np.diff(x_init)))
         th_init = np.append(th_init, th_init[-1])
         C_init = np.append(np.diff(th_init) / ds_real, 0)
         
-        # --- CasADi Optimization ---
         opti = ca.Opti()
-        
-        # State: [kappa, theta, x, y, alpha, z]
         Z = opti.variable(N, 6) 
         z_C, z_th, z_x, z_y, z_alp, z_z = Z[:,0], Z[:,1], Z[:,2], Z[:,3], Z[:,4], Z[:,5]
-        
-        # Control: [d_kappa/ds, d_alpha/ds]
         u = opti.variable(N-1, 2) 
         
-        # Cost Function
-        x_dev = ((z_x[:-1] - x_init[:-1])**2 + (z_x[1:] - x_init[1:])**2) / 2
-        y_dev = ((z_y[:-1] - y_init[:-1])**2 + (z_y[1:] - y_init[1:])**2) / 2
-        z_dev = ((z_z[:-1] - z_init[:-1])**2 + (z_z[1:] - z_init[1:])**2) / 2
-        
-        reg_term = r * u[:,0]**2 + 10*r * u[:,1]**2
-        
-        cost = ca.sum1(ds_real * (reg_term + x_dev + y_dev + z_dev))
-        opti.minimize(cost)
-        
-        # Dynamics
-        def f_dyn(z_in, u_in):
-            return ca.vertcat(u_in[0],              # dC/ds
-                              z_in[0],              # dth/ds = kappa
-                              ca.cos(z_in[1]),      # dx/ds = cos(theta)
-                              ca.sin(z_in[1]),      # dy/ds = sin(theta)
-                              u_in[1],              # dalp/ds
-                              ca.sin(z_in[4]))      # dz/ds = sin(alpha)
-
-        for k in range(N-1):
-            z_k, u_k = Z[k, :].T, u[k, :].T
-            k1 = f_dyn(z_k, u_k)
-            k2 = f_dyn(z_k + ds_real/2*k1, u_k)
-            k3 = f_dyn(z_k + ds_real/2*k2, u_k)
-            k4 = f_dyn(z_k + ds_real*k3, u_k)
-            opti.subject_to(Z[k+1, :].T == z_k + ds_real/6 * (k1 + 2*k2 + 2*k3 + k4))
-
-        # Constraints
-        if is_closed:
-            opti.subject_to(Z[-1, 2] == Z[0, 2]) # x
-            opti.subject_to(Z[-1, 3] == Z[0, 3]) # y
-            opti.subject_to(Z[-1, 5] == Z[0, 5]) # z
-            opti.subject_to(Z[-1, 0] == Z[0, 0]) # kappa
-            opti.subject_to(Z[-1, 4] == Z[0, 4]) # alpha
-            n_loops = np.round((th_init[-1] - th_init[0]) / (2*np.pi))
-            opti.subject_to(z_th[-1] == z_th[0] + 2*np.pi*n_loops)
-
-        # Init guess
-        opti.set_initial(z_x, x_init)
-        opti.set_initial(z_y, y_init)
-        opti.set_initial(z_z, z_init)
-        opti.set_initial(z_th, th_init)
-        opti.set_initial(z_C, C_init)
-        opti.set_initial(z_alp, alpha_init)
-        
-        opti.solver('ipopt', {'expand': True}, {'max_iter': 500, 'print_level': 0})
-        
-        try:
-            sol = opti.solve()
-            Z_opt = sol.value(Z)
-            return {
-                's': s_traj, 'kappa': Z_opt[:, 0], 'psi': Z_opt[:, 1], 
-                'x': Z_opt[:, 2], 'y': Z_opt[:, 3], 'alpha': Z_opt[:, 4], 'z': Z_opt[:, 5]
-            }
-        except Exception as e:
-            print(f"Optimalizace selhala: {e}")
-            return {'s': s_traj, 'kappa': C_init, 'psi': th_init, 'x': x_init, 'y': y_init, 'alpha': alpha_init, 'z': z_init}
-
-
-    @staticmethod
-    def smooth_track2(x_smpl, y_smpl, z_smpl, ds=0.1,w_pos=50.0, r=1e1, is_closed=True):
-        """
-        Vyhladi trajektorii. Matematika cost function je sjednocena s MATLAB OCP.
-        """
-        x_smpl = np.array(x_smpl).flatten()
-        y_smpl = np.array(y_smpl).flatten()
-        z_smpl = np.array(z_smpl).flatten()
-        
-        dx = np.diff(x_smpl)
-        dy = np.diff(y_smpl)
-        ds_tmp = np.sqrt(dx**2 + dy**2)
-        s_tmp = np.concatenate(([0], np.cumsum(ds_tmp)))
-        
-        total_length = s_tmp[-1]
-        N = int(np.round(total_length / ds))
-        if N < 2: N = 2 
-        ds_real = total_length / N
-        s_traj = np.linspace(0, total_length, N) 
-        
-        # Prvotní interpolace
-        fx = PchipInterpolator(s_tmp, x_smpl)
-        fy = PchipInterpolator(s_tmp, y_smpl)
-        fz = PchipInterpolator(s_tmp, z_smpl)
-        x_init = fx(s_traj)
-        y_init = fy(s_traj)
-        z_init = fz(s_traj)
-        
-        # Init alpha, theta, C
-        dz_init = np.diff(z_init) / ds_real
-        alpha_init = np.arcsin(np.clip(dz_init, -0.2, 0.2))
-        alpha_init = np.append(alpha_init, alpha_init[-1])
-
-        th_init = np.unwrap(np.arctan2(np.diff(y_init), np.diff(x_init)))
-        th_init = np.append(th_init, th_init[-1])
-        C_init = np.append(np.diff(th_init) / ds_real, 0)
-        
-        # --- CasADi Optimalizace ---
-        opti = ca.Opti()
-        
-        # Stav: [kappa, theta, x, y, alpha, z]
-        Z = opti.variable(N, 6) 
-        z_C, z_th, z_x, z_y, z_alp, z_z = Z[:,0], Z[:,1], Z[:,2], Z[:,3], Z[:,4], Z[:,5]
-        
-        # Control: [d_kappa/ds, d_alpha/ds]
-        u = opti.variable(N-1, 2) 
-        
-
-        # 1. Odchylky pro X a Y (přesně jako Matlab)
         x_dev = w_pos*((z_x[:-1] - x_init[:-1])**2 + (z_x[1:] - x_init[1:])**2) / 2
         y_dev = w_pos*((z_y[:-1] - y_init[:-1])**2 + (z_y[1:] - y_init[1:])**2) / 2
-        
-        # 2. Odchylka pro Z (přidáno navíc oproti Matlabu, ale stejnou logikou)
         z_dev = w_pos*((z_z[:-1] - z_init[:-1])**2 + (z_z[1:] - z_init[1:])**2) / 2
-        
-        
-        # 3. Regularizace (smoothing) - Matlab má r*u^2
-        # Zde máme dvě u (křivost a sklon), oběma dáváme váhu 'r'
         reg_term = r * u[:,0]**2 + 10*r * u[:,1]**2
         
-        # Celková cost function
-        cost = ca.sum1(ds_real * (reg_term + x_dev + y_dev + z_dev))
+        opti.minimize(ca.sum1(ds_real * (reg_term + x_dev + y_dev + z_dev)))
         
-        opti.minimize(cost)
-        
-        # --- DYNAMIKA (RK4) ---
         def f_dyn(z_in, u_in):
-            return ca.vertcat(u_in[0],           # dC/ds
-                              z_in[0],           # dth/ds = kappa
-                              ca.cos(z_in[1]),   # dx/ds = cos(theta)
-                              ca.sin(z_in[1]),   # dy/ds = sin(theta)
-                              u_in[1],           # dalp/ds
-                              ca.sin(z_in[4]))   # dz/ds = sin(alpha)
+            return ca.vertcat(u_in[0], z_in[0], ca.cos(z_in[1]), ca.sin(z_in[1]), u_in[1], ca.sin(z_in[4]))
 
         for k in range(N-1):
             z_k, u_k = Z[k, :].T, u[k, :].T
@@ -1141,495 +994,86 @@ class TrackGenerator:
             k4 = f_dyn(z_k + ds_real*k3, u_k)
             opti.subject_to(Z[k+1, :].T == z_k + ds_real/6 * (k1 + 2*k2 + 2*k3 + k4))
 
-        # --- OMEZENÍ (Constraints) ---
         if is_closed:
-            opti.subject_to(Z[-1, 2] == Z[0, 2]) # x
-            opti.subject_to(Z[-1, 3] == Z[0, 3]) # y
-            opti.subject_to(Z[-1, 5] == Z[0, 5]) # z
-            opti.subject_to(Z[-1, 0] == Z[0, 0]) # kappa
-            opti.subject_to(Z[-1, 4] == Z[0, 4]) # alpha
+            opti.subject_to(Z[-1, 2] == Z[0, 2]) 
+            opti.subject_to(Z[-1, 3] == Z[0, 3]) 
+            opti.subject_to(Z[-1, 5] == Z[0, 5]) 
+            opti.subject_to(Z[-1, 0] == Z[0, 0]) 
+            opti.subject_to(Z[-1, 4] == Z[0, 4]) 
             n_loops = np.round((th_init[-1] - th_init[0]) / (2*np.pi))
             opti.subject_to(z_th[-1] == z_th[0] + 2*np.pi*n_loops)
 
-        # Inicializace
-        opti.set_initial(z_x, x_init)
-        opti.set_initial(z_y, y_init)
-        opti.set_initial(z_z, z_init)
-        opti.set_initial(z_th, th_init)
-        opti.set_initial(z_C, C_init)
-        opti.set_initial(z_alp, alpha_init)
+        opti.set_initial(z_x, x_init); opti.set_initial(z_y, y_init); opti.set_initial(z_z, z_init)
+        opti.set_initial(z_th, th_init); opti.set_initial(z_C, C_init); opti.set_initial(z_alp, alpha_init)
         
-        # Nastavení solveru (stejně jako v Matlabu)
-        opti.solver('ipopt', {'expand': True}, {'max_iter': 500, 'print_level': 0})
+        opti.solver('ipopt', {'expand': True}, {'max_iter': 500, 'print_level': 0, 'sb': 'yes'})
         
         try:
             sol = opti.solve()
             Z_opt = sol.value(Z)
-            return {
-                's': s_traj, 'kappa': Z_opt[:, 0], 'psi': Z_opt[:, 1], 
-                'x': Z_opt[:, 2], 'y': Z_opt[:, 3], 'alpha': Z_opt[:, 4], 'z': Z_opt[:, 5]
-            }
+            return {'s': s_traj, 'kappa': Z_opt[:, 0], 'psi': Z_opt[:, 1], 'x': Z_opt[:, 2], 'y': Z_opt[:, 3], 'alpha': Z_opt[:, 4], 'z': Z_opt[:, 5]}
         except Exception as e:
             print(f"Optimalizace selhala: {e}")
-            return {'s': s_traj, 'kappa': C_init, 'psi': th_init, 'x': x_init, 'y': y_init, 'alpha': alpha_init, 'z': z_init}
-# ==========================================
-# 2. HELPERS & DATA LOADERS
-# ==========================================
-    @staticmethod
-    def latlon_to_meters(lat, lon):
-        lat_rad, lon_rad = np.radians(lat), np.radians(lon)
-        lat0, lon0 = lat_rad[0], lon_rad[0]
-        R = 6371000 
-        x = R * (lon_rad - lon0) * np.cos(lat0)
-        y = R * (lat_rad - lat0)
-        return x, y
-    
-    @staticmethod
-    def filter_data(mat_file):
-        print("Loading MAT data...")
-        mat_data = scipy.io.loadmat(mat_file)
-        
-        # Extract data (zkráceno pro přehlednost - logika stejná)
-        try:
-            ins = mat_data['INS'][0,0]
-            ams = mat_data['AMS'][0,0]
-            pdl = mat_data['PDL'][0,0]
-            
-            gps = ins['EKF_POS'][0,0]
-            vel = ins['EKF_VEL_BODY'][0,0]
-            alt = ins['EKF_ALTITUDE'][0,0]
-            acc = ins['EKF_POS_ACC'][0,0]
-            
-            longitude = np.array(gps['Longitude']).flatten()
-            latitude = np.array(gps['Latitude']).flatten()
-            gps_time = np.array(gps['t']).flatten()
-            acc_time = np.array(acc['t']).flatten()
-            
-            speed = np.array(vel['VELOCITY_X']).flatten()
-            speed_time = np.array(vel['t']).flatten()
-            
-            altitude = np.array(alt['Altitude']).flatten()
-            altitude_time = np.array(alt['t']).flatten()
-
-            long_acc = np.array(acc['Longitude_acc']).flatten()
-            lat_acc = np.array(acc['Latitude_acc']).flatten()
-            altitude_acc = np.array(acc['Altitude_acc']).flatten()
-            # Interpolace
-            lat_interp = np.interp(speed_time, gps_time, latitude)
-            lat_acc_interp = np.interp(speed_time, acc_time, lat_acc)
-            lon_interp = np.interp(speed_time, gps_time, longitude)
-            long_acc_interp = np.interp(speed_time, acc_time, long_acc)
-            alt_interp = np.interp(speed_time, altitude_time, altitude)
-            altitude_acc_interp = np.interp(speed_time, acc_time, altitude_acc)
-            
-            # Power & Brake
-            p_out = np.array(ams['TsMeas'][0,0]['Pout']).flatten()
-            p_time = np.array(ams['TsMeas'][0,0]['t']).flatten()
-            p_interp = np.interp(speed_time, p_time, p_out)
-            
-            b_front = np.array(pdl['Brakes'][0,0]['Front']).flatten()
-            b_rear = np.array(pdl['Brakes'][0,0]['Rear']).flatten()
-            b_time = np.array(pdl['Brakes'][0,0]['t']).flatten()
-            b_interp = np.interp(speed_time, b_time, b_front + b_rear)
-            
-            mask = (lat_acc_interp < 1.5) & (long_acc_interp < 1.5) & (altitude_acc_interp < 1.5)
-            valid_indices = np.where(mask)[0]
-            start_idx = valid_indices[0]
-            end_idx = valid_indices[-1]
-            
-            return {
-                'Speed': speed[start_idx:end_idx], 
-                'Latitude': lat_interp[start_idx:end_idx],
-                'Longitude': lon_interp[start_idx:end_idx], 
-                'Altitude': alt_interp[start_idx:end_idx],
-                'Power': p_interp[start_idx:end_idx],
-                'Brake': b_interp[start_idx:end_idx], 
-                'Time': speed_time[start_idx:end_idx]
-            }
-        except Exception as e:
-            print(f"Error parsing MAT file structure: {e}")
             return None
 
-# ==========================================
-# 3. INTERACTIVE SELECTORS (Matplotlib)
-# ==========================================
-    @staticmethod
-    def get_tangent_vector(data, latitude_ref, longitude_ref):
-        lon, lat = data["Longitude"], data["Latitude"]
-        distances = np.sqrt((lon - longitude_ref)**2 + (lat - latitude_ref)**2)
-        closest_idx = np.argmin(distances)
-        vector = np.array([0.0, 0.0])
-        for i in range(1, 51):
-            if closest_idx + i < len(lon):
-                vector = np.array([lon[closest_idx + i] - lon[closest_idx],
-                                lat[closest_idx + i] - lat[closest_idx]])
-                if not np.allclose(vector, [0, 0]): break
-        return closest_idx, vector
+def generate_smoothed_track(all_data, lap_infos, is_closed, r_penalty):
+    """Vezme surová data, vyhladí je přes CasADi a zprůměruje, pokud je kol více."""
+    tg = TrackGenerator()
+    smoothed_list, telemetry_list = [], []
 
-    @staticmethod
-    def get_lap_indices(data, point, tangent_vector):
-        lat, lon = data["Latitude"], data["Longitude"]
-        rel_long, rel_lat = lon - point[1], lat - point[0]
-        vec_norm = np.dot(tangent_vector, tangent_vector)
-        projected = np.array([np.dot([rel_long[i], rel_lat[i]], tangent_vector) / vec_norm for i in range(len(lon))])
-        minima_indices, _ = find_peaks(-np.abs(projected))
-        return [i for i in minima_indices if (abs(rel_long[i]) + abs(rel_lat[i])) < 0.0002]
+    print(f"Zpracovávám {len(lap_infos)} kol s r={r_penalty}...")
 
- 
-    @staticmethod
-    def run_lap_selector(filtered_data):
-        # --- FÁZE 1: Výběr startovní čáry ---
-        fig1, ax1 = plt.subplots(figsize=(10, 8))
-        ax1.plot(filtered_data["Longitude"], filtered_data["Latitude"], ",", color='gray', alpha=0.3)
-        ax1.set_title("1. Click on start/finish (Direction matters!)\n2. Press ENTER to confirm")
-        
-        selected = {'idx': None, 'vec': None, 'laps': []}
-        temp_plot = []
+    for lap in lap_infos:
+        s_idx, e_idx = lap['indices']
+        raw_lat, raw_lon = all_data['Latitude'][s_idx:e_idx], all_data['Longitude'][s_idx:e_idx]
+        raw_power, raw_brake = all_data['Power'][s_idx:e_idx], all_data['Brake'][s_idx:e_idx]
+        raw_speed, raw_alt = all_data['Speed'][s_idx:e_idx], all_data['Altitude'][s_idx:e_idx]
 
-        def on_click(event):
-            if event.inaxes != ax1: return
-            for e in temp_plot: e.remove()
-            temp_plot.clear()
-            # Předpokládám, že get_tangent_vector vrací (index, vektor)
-            idx, vec = TrackGenerator.get_tangent_vector(filtered_data, event.ydata, event.xdata)
-            selected.update({'idx': idx, 'vec': vec})
-            
-            p, = ax1.plot(filtered_data["Longitude"][idx], filtered_data["Latitude"][idx], "ro", markersize=10)
-            # Volitelně: vykreslit šipku směru, aby uživatel viděl orientaci
-            arrow = ax1.arrow(filtered_data["Longitude"][idx], filtered_data["Latitude"][idx], 
-                              vec[0]*0.0001, vec[1]*0.0001, head_width=0.00001, color='red')
-            temp_plot.append(p)
-            temp_plot.append(arrow)
-            fig1.canvas.draw()
+        x_m, y_m = latlon_to_meters(raw_lat, raw_lon)
+        sm = tg.smooth_track(x_m, y_m, raw_alt, ds=0.1, r=r_penalty, is_closed=is_closed)
+        if sm is None: raise RuntimeError("Smoothing selhal pro jedno kolo.")
 
-        def on_key_init(event):
-            if event.key == "enter" and selected['idx'] is not None:
-                pt = [filtered_data["Latitude"][selected['idx']], filtered_data["Longitude"][selected['idx']]]
-                selected['laps'] = TrackGenerator.get_lap_indices(filtered_data, pt, selected['vec'])
-                
-                # DŮLEŽITÉ: Zastavit smyčku a zavřít
-                fig1.canvas.stop_event_loop()
-                plt.close(fig1)
-
-        # Bezpečnostní handler pro zavření křížkem
-        def handle_close1(evt):
-            fig1.canvas.stop_event_loop()
-
-        fig1.canvas.mpl_connect("button_press_event", on_click)
-        fig1.canvas.mpl_connect("key_press_event", on_key_init)
-        fig1.canvas.mpl_connect("close_event", handle_close1)
-        
-        # --- FIX PRO QT EVENT LOOP ---
-        plt.show(block=False)
-        fig1.canvas.start_event_loop(timeout=-1)
-        # -----------------------------
-
-        if len(selected['laps']) < 2:
-            return None
-
-        # --- FÁZE 2: Listování koly ---
-        lap_indices = selected['laps']
-        laps_data = []
-        for i in range(len(lap_indices) - 1):
-            s, e = lap_indices[i], lap_indices[i+1]
-            laps_data.append({
-                'indices': (s, e),
-                'time': filtered_data["Time"][e] - filtered_data["Time"][s]
-            })
-
-        state = {'current': 0, 'confirmed_lap': None}
-
-        fig2, ax2 = plt.subplots(figsize=(10, 8))
-        
-        def update_plot():
-            ax2.clear()
-            idx = state['current']
-            s, e = laps_data[idx]['indices']
-            
-            ax2.plot(filtered_data["Longitude"], filtered_data["Latitude"], ",", color='gray', alpha=0.1)
-            ax2.plot(filtered_data["Longitude"][s:e], filtered_data["Latitude"][s:e], "b-", linewidth=2)
-            
-            ax2.set_title(f"Lap {idx+1}/{len(laps_data)} | Time: {laps_data[idx]['time']:.3f}s\n"
-                        f"Arrows: browse laps | Enter: Save and close | Esc: Cancel")
-            fig2.canvas.draw()
-
-        def on_key_browse(event):
-            if event.key == "right":
-                state['current'] = (state['current'] + 1) % len(laps_data)
-            elif event.key == "left":
-                state['current'] = (state['current'] - 1) % len(laps_data)
-            elif event.key == "enter":
-                state['confirmed_lap'] = laps_data[state['current']]
-                fig2.canvas.stop_event_loop()
-                plt.close(fig2)
-            elif event.key == "escape":
-                fig2.canvas.stop_event_loop()
-                plt.close(fig2)
-            update_plot()
-
-        def handle_close2(evt):
-            fig2.canvas.stop_event_loop()
-
-        fig2.canvas.mpl_connect("key_press_event", on_key_browse)
-        fig2.canvas.mpl_connect("close_event", handle_close2)
-        
-        update_plot()
-        
-        # --- FIX PRO QT EVENT LOOP ---
-        plt.show(block=False)
-        fig2.canvas.start_event_loop(timeout=-1)
-        # -----------------------------
-
-        return state['confirmed_lap']
- 
-    @staticmethod
-    def manual_lap_selector(data):
-        t = data["Time"]
-        v = data["Speed"]
-        p = data["Power"]
-        
-        state = {"idx": None, "confirmed": False}
-        
-        
-        current_selection = [None] 
-
-        fig, axs = plt.subplots(2, 1, sharex=True, figsize=(12, 8))
-        
-       
-        axs[0].plot(t, v, label="Speed [m/s]", color='#1f77b4')
-        axs[1].plot(t, p, label="Power [kW]", color='#ff7f0e')
-        
- 
-        ymin, ymax = axs[0].get_ylim()
-        axs[0].fill_between(t, ymin, ymax, where=(v < 3.0), 
-                            facecolor='red', alpha=0.15, label="Speed < 3 m/s (don't use, method creating track will crash))", zorder=0)
-        
-      
-        axs[0].legend(loc='upper right')
-        axs[1].legend(loc='upper right')
-        axs[0].grid(True, alpha=0.3)
-        axs[1].grid(True, alpha=0.3)
-
-        def onselect(t_min, t_max):
-            # Přepočet času na indexy
-            s = np.searchsorted(t, t_min)
-            e = np.searchsorted(t, t_max)
-            state["idx"] = (s, e)
-            
-            # --- FIX: VIZUÁLNÍ PERSISTENCE ---
-            # 1. Smazat starý výběr, pokud existuje
-            if current_selection[0] is not None:
-                current_selection[0].remove()
-            
-            # 2. Vykreslit nový trvalý obdélník přes oba grafy
-            # Použijeme žlutou barvu (stejnou jako SpanSelector)
-            rect = axs[0].axvspan(t_min, t_max, color='yellow', alpha=0.3)
-            axs[1].axvspan(t_min, t_max, color='yellow', alpha=0.3) # Volitelně i dole
-            
-            # Uložíme referenci (stačí na jeden, protože se mažou překreslením canvasu nebo referencí)
-            # Zde pro jednoduchost mažeme jen ten horní přes referenci, 
-            # spodní se smaže překreslením celé figury nebo bychom museli držet list.
-            current_selection[0] = rect
-            
-            print(f"Selected: {t[e]-t[s]:.2f}s Press ENTER to save")
-            fig.canvas.draw()
-
-        # Nastavení SpanSelectoru
-        # props=dict(alpha=0) znamená, že samotný selector bude při tažení neviditelný 
-        # (nebo průhledný), pokud chceme spoléhat jen na naše vykreslování, 
-        # ale nechme ho viditelný pro UX při tažení.
-        span = SpanSelector(
-            axs[0], 
-            onselect, 
-            "horizontal", 
-            useblit=True,
-            props=dict(facecolor="yellow", alpha=0.3)
-        )
-        
-        plt.suptitle("1. Drag with mouse to select the segment\n2. Press ENTER to save")
-        
-        def on_key(event):
-            if event.key == "enter" and state["idx"] is not None:
-                state["confirmed"] = True
-               
-                fig.canvas.stop_event_loop()
-                plt.close(fig)
-            elif event.key == "escape":
-             
-                fig.canvas.stop_event_loop()
-                plt.close(fig)
-
-        def handle_close(evt):
-            fig.canvas.stop_event_loop()
-
-        fig.canvas.mpl_connect("key_press_event", on_key)
-        fig.canvas.mpl_connect("close_event", handle_close)
-        
-        
-        plt.show(block=False)
-        fig.canvas.start_event_loop(timeout=-1)
-        
-        if not state["confirmed"] or state["idx"] is None:
-            return None
-            
-        s, e = state["idx"]
-        return {"indices": (s, e), "time": t[e] - t[s]}
-
- 
-
-    @staticmethod
-    def process_and_save_lap(all_data, lap_info, is_closed, save_path):
-        s, e = lap_info['indices']
-        
-        # 1. Extrakce surových dat
-        raw_lat = all_data['Latitude'][s:e]
-        raw_lon = all_data['Longitude'][s:e]
-        raw_alt = all_data['Altitude'][s:e]
-        raw_speed = all_data['Speed'][s:e]
-        raw_power = all_data['Power'][s:e]
-        raw_brake = all_data['Brake'][s:e]
-
-        # 2. Příprava masek
-        # A) Speed Mask
-        speed_mask = raw_speed > 1.0
-        
-        # B) Distance Mask (převod na metry pro výpočet vzdáleností)
-        x_m_temp, y_m_temp = TrackGenerator.latlon_to_meters(raw_lat, raw_lon)
-        dx = np.diff(x_m_temp, prepend=x_m_temp[0])
-        dy = np.diff(y_m_temp, prepend=y_m_temp[0])
-        dist_sq = dx**2 + dy**2
-        dist_mask = np.concatenate(([True], dist_sq[1:] > 1e-6)) # 1mm tolerance
-
-        # 3. Aplikace kombinované masky na VŠECHNA DATA
-        final_mask = speed_mask & dist_mask
-        
-        # DŮLEŽITÉ: Musíme zkrátit všechna pole, aby seděla délka
-        raw_lat = raw_lat[final_mask]
-        raw_lon = raw_lon[final_mask]
-        raw_alt = raw_alt[final_mask]
-        raw_speed = raw_speed[final_mask]
-        raw_power = raw_power[final_mask]
-        raw_brake = raw_brake[final_mask]
-
-        # Znovu přepočítáme x_m, y_m už z vyfiltrovaných Lat/Lon
-        # (Nebo bychom mohli filtrovat x_m_temp, ale takhle je to čistší)
-        x_m, y_m = TrackGenerator.latlon_to_meters(raw_lat, raw_lon)
-
-        if len(x_m) < 10:
-            msg = "Error: Not enough valid data points. Car must be strictly in motion (> 1 m/s)."
-            return False, msg # <--- VRACÍ TUPLE
-        
-        # 4. Smoothing
-        tg = TrackGenerator()
-        smoothed = tg.smooth_track(x_m, y_m, raw_alt, ds=0.1, r=1e-3, is_closed=is_closed)
-        
-        if smoothed is None: 
-            return False, "Smoothing optimization failed (IPOPT error)." # <--- VRACÍ TUPLE
-        
-        # 5. Interpolace Telemetrie
-        # s_raw počítáme z FILTROVANÝCH dat (x_m, y_m mají nyní stejnou délku jako raw_speed atd.)
         s_raw = np.concatenate(([0], np.cumsum(np.sqrt(np.diff(x_m)**2 + np.diff(y_m)**2))))
+        _, unique_indices = np.unique(s_raw, return_index=True)
+        s_raw = s_raw[unique_indices]
         
-        def interp_on_s(data_arr):
-            # data_arr musí mít stejnou délku jako s_raw!
-            f = interp1d(s_raw, data_arr, kind='linear', fill_value="extrapolate")
-            return f(smoothed['s'])
+        f_power = interp1d(s_raw, raw_power[unique_indices], kind='linear', fill_value='extrapolate')
+        f_brake = interp1d(s_raw, raw_brake[unique_indices], kind='linear', fill_value='extrapolate')
+        f_speed = interp1d(s_raw, raw_speed[unique_indices], kind='linear', fill_value='extrapolate')
+        f_alt = interp1d(s_raw, raw_alt[unique_indices], kind='linear', fill_value='extrapolate')
 
-        final_data = {
-            's': smoothed['s'],
-            'x': smoothed['x'],
-            'y': smoothed['y'],
-            'z': smoothed['z'],
-            'kappa': smoothed['kappa'],
-            'psi': smoothed['psi'],
-            'alpha': smoothed['alpha'],
-            'speed': interp_on_s(raw_speed), 
-            'power': interp_on_s(raw_power),
-            'brake': interp_on_s(raw_brake),
-        }
-        
-        np.savez(save_path, **final_data)
-        
-        return True, "Track generated successfully." 
+        smoothed_list.append(sm)
+        telemetry_list.append({'power': f_power, 'brake': f_brake, 'speed': f_speed, 'alt': f_alt})
 
-# ==========================================
-# 4. PROCESSING & SAVING
-# ==========================================
-    @staticmethod
-    def process_and_save_lap(all_data, lap_info, is_closed, save_path):
-        s, e = lap_info['indices']
-        
-        # 1. Extrakce surových dat
-        raw_lat = all_data['Latitude'][s:e]
-        raw_lon = all_data['Longitude'][s:e]
-        raw_alt = all_data['Altitude'][s:e]
-        raw_speed = all_data['Speed'][s:e]
-        raw_power = all_data['Power'][s:e]
-        raw_brake = all_data['Brake'][s:e]
+    if len(smoothed_list) == 1:
+        res = smoothed_list[0]
+        fns = telemetry_list[0]
+        final_s, final_kappa, final_psi, final_x, final_y, final_alpha = res['s'], res['kappa'], res['psi'], res['x'], res['y'], res['alpha']
+        final_z, final_power, final_brake, final_speed = fns['alt'](final_s), fns['power'](final_s), fns['brake'](final_s), fns['speed'](final_s)
+        avg_lap_time = lap_infos[0]['time']
+    else:
+        min_len = min([s_arr['s'][-1] for s_arr in smoothed_list])
+        N_common = min(len(s_arr['s']) for s_arr in smoothed_list)
+        final_s = np.linspace(0, min_len, N_common)
 
-        # 2. Vytvoření masek (Filtry)
-        # A) Speed Mask (Auto musí jet > 1 m/s)
-        speed_mask = raw_speed > 1.0
-        
-        # B) Distance Mask (převod na metry pro zjištění duplicit)
-        x_m_temp, y_m_temp = TrackGenerator.latlon_to_meters(raw_lat, raw_lon)
-        dx = np.diff(x_m_temp, prepend=x_m_temp[0])
-        dy = np.diff(y_m_temp, prepend=y_m_temp[0])
-        dist_sq = dx**2 + dy**2
-        dist_mask = np.concatenate(([True], dist_sq[1:] > 1e-6)) # tolerance 1mm
+        vals = {k: [] for k in ['x', 'y', 'z', 'kappa', 'alpha', 'psi_sin', 'psi_cos', 'p', 'b', 'v']}
+        for sm, fns in zip(smoothed_list, telemetry_list):
+            for k in ['x', 'y', 'kappa', 'alpha']: vals[k].append(interp1d(sm['s'], sm[k])(final_s))
+            vals['z'].append(fns['alt'](final_s))
+            psi_curr = interp1d(sm['s'], sm['psi'])(final_s)
+            vals['psi_sin'].append(np.sin(psi_curr)); vals['psi_cos'].append(np.cos(psi_curr))
+            vals['p'].append(fns['power'](final_s)); vals['b'].append(fns['brake'](final_s)); vals['v'].append(fns['speed'](final_s))
 
-        # 3. Aplikace kombinované masky na VŠECHNA DATA
-        final_mask = speed_mask & dist_mask
-        
-        # Filtrujeme souřadnice
-        x_m = x_m_temp[final_mask]
-        y_m = y_m_temp[final_mask]
-        
-        # Filtrujeme telemetrii (DŮLEŽITÉ pro pozdější interpolaci!)
-        raw_alt = raw_alt[final_mask]
-        raw_speed = raw_speed[final_mask]
-        raw_power = raw_power[final_mask]
-        raw_brake = raw_brake[final_mask]
+        final_x, final_y, final_z = np.mean(vals['x'], axis=0), np.mean(vals['y'], axis=0), np.mean(vals['z'], axis=0)
+        final_kappa, final_alpha = np.mean(vals['kappa'], axis=0), np.mean(vals['alpha'], axis=0)
+        final_psi = np.arctan2(np.mean(vals['psi_sin'], axis=0), np.mean(vals['psi_cos'], axis=0))
+        final_power, final_brake, final_speed = np.mean(vals['p'], axis=0), np.mean(vals['b'], axis=0), np.mean(vals['v'], axis=0)
+        avg_lap_time = float(np.mean([l['time'] for l in lap_infos]))
 
-        # --- FIX 1: Return Tuple ---
-        if len(x_m) < 10:
-            msg = "Error: Not enough valid data points. Car must be moving (> 1 m/s)."
-            return False, msg 
-        
-        # 4. Smoothing
-        tg = TrackGenerator()
-        smoothed = tg.smooth_track(x_m, y_m, raw_alt, ds=0.1, r=1000, is_closed=is_closed)
-        
-        # --- FIX 2: Return Tuple ---
-        if smoothed is None: 
-            return False, "Smoothing optimization failed (IPOPT error)."
-        
-        # 5. Interpolace Telemetrie
-        # s_raw počítáme z FILTROVANÝCH dat
-        s_raw = np.concatenate(([0], np.cumsum(np.sqrt(np.diff(x_m)**2 + np.diff(y_m)**2))))
-        
-        def interp_on_s(data_arr):
-            # data_arr musí mít stejnou délku jako s_raw!
-            f = interp1d(s_raw, data_arr, kind='linear', fill_value="extrapolate")
-            return f(smoothed['s'])
-
-        final_data = {
-            's': smoothed['s'],
-            'x': smoothed['x'],
-            'y': smoothed['y'],
-            'z': smoothed['z'],
-            'kappa': smoothed['kappa'],
-            'psi': smoothed['psi'],
-            'alpha': smoothed['alpha'],
-            'speed': interp_on_s(raw_speed), 
-            'power': interp_on_s(raw_power),
-            'brake': interp_on_s(raw_brake),
-        }
-        
-        np.savez(save_path, **final_data)
-        
-        # --- FIX 3: Return Tuple ---
-        return True, "Track generated successfully."
+    return {
+        's': final_s, 'kappa': final_kappa, 'psi': final_psi, 'x': final_x, 'y': final_y, 'z': final_z,
+        'alpha': final_alpha, 'power': final_power, 'brake': final_brake, 'speed': final_speed, 'lap_time': avg_lap_time
+    }
 --- KONEC SOUBORU: src\core\trackGenerator.py ---
 
 --- ZAČÁTEK SOUBORU: src\core\__init__.py ---
@@ -1640,7 +1084,7 @@ class TrackGenerator:
 {
     "acp_capacity": 6.0,
     "weight": 270.5,
-    "cd": 1.83,
+    "cd": 2.13,
     "cd_drs": 1.17,
     "cl": 5.64,
     "cl_drs": 4.2,
@@ -1650,9 +1094,10 @@ class TrackGenerator:
     "laps": 18,
     "ds": 1.0,
     "model_type": "mass_point_rk4",
-    "energy_limit": null,
-    "drs_allowed": false,
-    "soc_start": 0.8
+    "energy_limit": 0.35,
+    "drs_allowed": true,
+    "soc_start": 0.8,
+    "name": "CTU25"
 }
 --- KONEC SOUBORU: src\core\vehicles\CTU25.json ---
 
@@ -1672,29 +1117,52 @@ class TrackGenerator:
     "model_type": "mass_point_rk4",
     "energy_limit": null,
     "drs_allowed": false,
-    "soc_start": 0.75
+    "soc_start": 0.5,
+    "name": "CTU26"
 }
 --- KONEC SOUBORU: src\core\vehicles\CTU26.json ---
 
 --- ZAČÁTEK SOUBORU: src\core\vehicles\CTU27.json ---
 {
     "acp_capacity": 6.0,
-    "weight": 270.5,
+    "weight": 260.5,
     "cd": 1.83,
     "cd_drs": 1.17,
-    "cl": 5.64,
+    "cl": 5.8,
     "cl_drs": 4.2,
     "cop": 0.53,
     "power_limit": 80.0,
     "regen_eff": 0.8,
     "laps": 18,
     "ds": 1.0,
-    "model_type": "single_track",
+    "model_type": "mass_point_rk4",
     "energy_limit": null,
     "drs_allowed": false,
-    "soc_start": 0.8
+    "soc_start": 0.49,
+    "name": "CTU27"
 }
 --- KONEC SOUBORU: src\core\vehicles\CTU27.json ---
+
+--- ZAČÁTEK SOUBORU: src\core\vehicles\CTU28.json ---
+{
+    "acp_capacity": 6.0,
+    "weight": 280.0,
+    "cd": 1.83,
+    "cd_drs": 1.17,
+    "cl": 5.64,
+    "cl_drs": 4.2,
+    "cop": 0.53,
+    "power_limit": 37.0,
+    "regen_eff": 0.8,
+    "laps": 18,
+    "ds": 1.0,
+    "model_type": "mass_point_rk4",
+    "energy_limit": null,
+    "drs_allowed": true,
+    "soc_start": 0.1,
+    "name": "CTU28"
+}
+--- KONEC SOUBORU: src\core\vehicles\CTU28.json ---
 
 --- ZAČÁTEK SOUBORU: src\core\vehicles\default_car.json ---
 {
@@ -1712,7 +1180,8 @@ class TrackGenerator:
     "model_type": "mass_point_rk4",
     "energy_limit": null,
     "drs_allowed": false,
-    "soc_start": 1.0
+    "soc_start": 0.1,
+    "name": "default_car"
 }
 --- KONEC SOUBORU: src\core\vehicles\default_car.json ---
 
@@ -1720,7 +1189,8 @@ class TrackGenerator:
 from PyQt6.QtCore import QObject, pyqtSignal
 from src.core.car import Car
 from src.core.track import Track
-from src.optimization.solver import MassPointSolver, SingleTrackSolver, StrategyMaker
+from src.optimization.solvers import MassPointSolver, StrategyMaker
+from src.optimization.solvers import InitConditions, calculate_initial_guess
 from src.optimization.work_thread import SimulationWorker
 
 # import tasks
@@ -1745,13 +1215,11 @@ class SimulationController(QObject):
         self.active_worker = None
 
     def _create_solver(self, car: Car, track: Track, laps: int):
-        # helper method to build the right solver based on car configuration
-        if car.model_type == "single_track":
-            return SingleTrackSolver(car, track, laps=laps)
-        elif car.model_type == "mass_point_rk4":
-            return MassPointSolver(car, track, rk4=True, laps=laps)
+       
+        if car.model_type == "mass_point_rk4":
+            return MassPointSolver(car, track)
         else:
-            return MassPointSolver(car, track, rk4=False, laps=laps)
+            return MassPointSolver(car, track)
 
     def handle_request(self, req):
         # single entry point for all incoming simulation requests
@@ -1864,16 +1332,143 @@ class DeploymentOptRequest(StrategyOptRequest):
     pass
 --- KONEC SOUBORU: src\handlers\requests.py ---
 
+--- ZAČÁTEK SOUBORU: src\handlers\telemetry_parser.py ---
+import scipy.io
+import numpy as np
+
+def filter_data(mat_file):
+    """
+    Načte .mat soubor s telemetrií, provede interpolaci na společnou časovou osu
+    a ořízne data podle přesnosti GPS signálu.
+    """
+    print(f"Načítám a filtruji data ze souboru: {mat_file}")
+    mat_data = scipy.io.loadmat(mat_file)
+    
+    # GPS a Rychlost (INS)
+    longitude = np.array(mat_data['INS'][0,0]['EKF_POS'][0,0]['Longitude']).flatten()
+    latitude = np.array(mat_data['INS'][0,0]['EKF_POS'][0,0]['Latitude']).flatten()
+    gps_time = np.array(mat_data['INS'][0,0]['EKF_POS'][0,0]['t']).flatten()
+
+    altitude = np.array(mat_data['INS'][0,0]['EKF_ALTITUDE'][0,0]['Altitude']).flatten()
+    altitude_time =  np.array(mat_data['INS'][0,0]['EKF_ALTITUDE'][0,0]['t']).flatten()
+    
+    long_acc = np.array(mat_data['INS'][0,0]['EKF_POS_ACC'][0,0]['Longitude_acc']).flatten()
+    lat_acc = np.array(mat_data['INS'][0,0]['EKF_POS_ACC'][0,0]['Latitude_acc']).flatten()
+    altitude_acc = np.array(mat_data['INS'][0,0]['EKF_POS_ACC'][0,0]['Altitude_acc']).flatten()
+    precision_time = np.array(mat_data['INS'][0,0]['EKF_POS_ACC'][0,0]['t']).flatten()
+    
+    speed = np.array(mat_data['INS'][0,0]['EKF_VEL_BODY'][0,0]['VELOCITY_X']).flatten()
+    speed_time = np.array(mat_data['INS'][0,0]['EKF_VEL_BODY'][0,0]['t']).flatten()
+
+    # Výkon (AMS)
+    p_out = np.array(mat_data['AMS'][0,0]['TsMeas'][0,0]['Pout']).flatten()
+    p_time = np.array(mat_data['AMS'][0,0]['TsMeas'][0,0]['t']).flatten()
+    
+    # Brzdy
+    brakeF = np.array(mat_data['PDL'][0,0]['Brakes'][0,0]['Front']).flatten()
+    brakeR = np.array(mat_data['PDL'][0,0]['Brakes'][0,0]['Rear']).flatten()
+    brake_time = np.array(mat_data['PDL'][0,0]['Brakes'][0,0]['t']).flatten()
+
+    # Yaw rate
+    yaw_rate = np.array(mat_data['INS'][0,0]['IMU_GYRO'][0,0]['Gyro_Z']).flatten()
+    yaw_time = np.array(mat_data['INS'][0,0]['IMU_GYRO'][0,0]['t']).flatten()
+
+    # Interpolace na speed_time
+    lat_interp = np.interp(speed_time, gps_time, latitude)
+    lon_interp = np.interp(speed_time, gps_time, longitude)
+    altitude_interp = np.interp(speed_time, altitude_time, altitude)
+    lat_acc_interp = np.interp(speed_time, precision_time, lat_acc)
+    long_acc_interp = np.interp(speed_time, precision_time, long_acc)
+    altitude_acc_interp = np.interp(speed_time, precision_time, altitude_acc)
+    p_interp = np.interp(speed_time, p_time, p_out)
+    brakeF_interp = np.interp(speed_time, brake_time, brakeF)
+    brakeR_interp = np.interp(speed_time, brake_time, brakeR)
+    yaw_rate_interp = np.interp(speed_time, yaw_time, yaw_rate)
+    brake = brakeF_interp + brakeR_interp
+
+    # Filtrace startu podle přesnosti GPS
+    mask = (lat_acc_interp < 1.5) & (long_acc_interp < 1.5) & (altitude_acc_interp < 1.5)
+    valid_indices = np.where(mask)[0]
+    
+    if len(valid_indices) == 0:
+        raise ValueError("Nepodařilo se najít žádná data s dostatečnou přesností GPS (acc < 1.5).")
+        
+    start_index = valid_indices[0]
+    end_index = valid_indices[-1]
+
+    return {
+        'Speed': speed[start_index:end_index], 
+        'Latitude': lat_interp[start_index:end_index],
+        'Longitude': lon_interp[start_index:end_index], 
+        'Altitude': altitude_interp[start_index:end_index],
+        'Power': p_interp[start_index:end_index],
+        'Brake': brake[start_index:end_index], 
+        'Time': speed_time[start_index:end_index],
+        'YawRate': yaw_rate_interp[start_index:end_index] 
+    }
+--- KONEC SOUBORU: src\handlers\telemetry_parser.py ---
+
 --- ZAČÁTEK SOUBORU: src\handlers\__init___.py ---
 
 --- KONEC SOUBORU: src\handlers\__init___.py ---
 
---- ZAČÁTEK SOUBORU: src\optimization\solver.py ---
-import casadi as ca
-import numpy as np
-from src.core.car import Car
+--- ZAČÁTEK SOUBORU: src\optimization\track_generation_thread.py ---
+from PyQt6.QtCore import QThread, pyqtSignal
+from src.core.trackGenerator import generate_smoothed_track
+
+class TrackGenerationWorker(QThread):
+    # Upravený signál: vrací (úspěch: bool, výsledek: dict nebo chybová_zpráva: str)
+    finished = pyqtSignal(bool, object) 
+
+    def __init__(self, data, lap_infos, is_closed, r_penalty):
+        super().__init__()
+        self.data = data
+        self.lap_infos = lap_infos
+        self.is_closed = is_closed
+        self.r_penalty = r_penalty
+
+    def run(self):
+        try:
+            # Zavolá naši novou čistou matematickou funkci
+            result = generate_smoothed_track(
+                self.data, self.lap_infos, self.is_closed, self.r_penalty
+            )
+            self.finished.emit(True, result)
+        except Exception as e:
+            self.finished.emit(False, str(e))
+--- KONEC SOUBORU: src\optimization\track_generation_thread.py ---
+
+--- ZAČÁTEK SOUBORU: src\optimization\work_thread.py ---
+from PyQt6.QtCore import QThread, pyqtSignal
+from src.optimization.tasks.base_task import SimulationTask
+
+class SimulationWorker(QThread):
+    """Thread that executes simulation tasks"""
+    finished = pyqtSignal(object) # returns SolverPayload
+    error = pyqtSignal(str)
+    progress = pyqtSignal(int, int)     
+
+    def __init__(self, task: SimulationTask):
+        super().__init__()
+        self.task = task
+    
+    def run(self):
+        try:
+            payload = self.task.execute(progress_callback=self.progress.emit)
+            self.finished.emit(payload)
+        except Exception as e:
+            self.error.emit(str(e))
+--- KONEC SOUBORU: src\optimization\work_thread.py ---
+
+--- ZAČÁTEK SOUBORU: src\optimization\__init__.py ---
+
+--- KONEC SOUBORU: src\optimization\__init__.py ---
+
+--- ZAČÁTEK SOUBORU: src\optimization\solvers\base_solver.py ---
+# src/optimization/solvers/base_solver.py
+from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from matplotlib import pyplot as plt
+import numpy as np
 
 @dataclass
 class SolverResults:
@@ -1908,8 +1503,6 @@ class SolverResults:
     mu_y: float = 0.0
     regen_eff: float = 0.0
     ap_id: int = 0
-    
-
 @dataclass
 class InitConditions:
     v: float = 0.0  
@@ -1920,273 +1513,174 @@ class InitConditions:
     E_target: float = 0.0
     target_time: float = None
 
-
-class Scales:
-    m = 280       # Hmotnost (kg)
-    v = 20.0         # Rychlost (m/s)
-    F = 6000      # Síla (N) - ideálně m*g
-    E = 3.6e6        # Energie (J) - např. 1 kWh, nebo kapacita baterie
-    T = 60.0        # Čas (s)
-    L = 1000.0       # Délka (m)    
-
-class MassPointSolver:
-    def __init__(self,car,track,rk4=False,laps=1):
-
+class BaseSolver(ABC):
+    
+    def __init__(self, car, track, laps=1):
         self.car = car
         self.track = track
         self.laps = laps
-        self.rk4 = rk4
-  
 
-    def solveLap(self, init_cond: InitConditions, init_guess=None, ds=0.5):
+    @abstractmethod
+    def solve(self, init_cond: InitConditions, init_guess=None, ds=0.5) -> SolverResults:
+        """
+        Abstract method for all solvers
+        """
+        pass
+--- KONEC SOUBORU: src\optimization\solvers\base_solver.py ---
 
-        opti = ca.Opti()
+--- ZAČÁTEK SOUBORU: src\optimization\solvers\init_guess.py ---
+# src/optimization/solvers/utils.py
+import numpy as np
+from src.optimization.solvers.base_solver import InitConditions
 
-        # =========================
-        # Parameters
-        # =========================
-        p_weight = opti.parameter()
-        p_cl   = opti.parameter()
-        p_cd   = opti.parameter()
- 
-
-        # Set params values
-        opti.set_value(p_weight, self.car.weight)
-        opti.set_value(p_cl,   self.car.cl)
-        opti.set_value(p_cd,   self.car.cd)
-   
-
-        # =========================
-        # Track data
-        # =========================
-        total_length = self.track.length
-        N = int(np.round(total_length / ds))
-
-        s_sim = np.linspace(0, total_length, N + 1)
-        ds = s_sim[1:] - s_sim[:-1]
-
-        kappa_grid = self.track.get_curvature(s_sim)
-
-        # =========================
-        # States
-        # =========================
-        v = opti.variable(N + 1)   # speed [m/s]
-        T = opti.variable(N + 1)   # time [s]
-        E = opti.variable(N + 1)   # energy used [kWh]
-        
-        # =========================
-        # Inputs
-        # =========================
-        F_acc   = opti.variable(N)   # Gas [N]
-        F_brake_mech = opti.variable(N)
-        F_brake_regen = opti.variable(N)
-        F_brake = F_brake_mech + F_brake_regen
-        drs     = opti.variable(N)
-
-        
-        # =========================
-        # DRS
-        # =========================
-        if self.car.drs_allowed and self.track.drs is not None:
-            drs_flag = self.track.get_drs_flag(s_sim[:-1])
-            drs_ef = drs * drs_flag
-            cl_eff = p_cl + drs_ef * (self.car.cl_drs - p_cl)
-            cd_eff = p_cd + drs_ef * (self.car.cd_drs - p_cd)
-        else:
-            drs_ef = ca.DM.zeros(N)
-            cl_eff = p_cl
-            cd_eff = p_cd
-
-        opti.subject_to(drs >= 0)
-        opti.subject_to(drs <= 1)
-
-        # Current speed (k)
-        v_k = v[:-1]
-
-        # =========================
-        # Aero
-        # =========================
-        F_drag = Car.get_aero_drag(self.car, v_k, cd=cd_eff)
-
-        F_max_x, F_max_y = Car.get_friction_limit(
-            self.car, v_k,
-            weight=p_weight,
-            use_cl=cl_eff
-        )
-
-        # Lateral Force: F_lat = m * v^2 * curvature
-        F_lat = p_weight * v_k**2 * ca.fabs(kappa_grid[:-1])
-
-        # Longitudinal force
-        F_long_k = F_acc + F_brake
-
-        # =========================
-        # Pedal constraints
-        # =========================
-        opti.subject_to(F_acc >= 0)
-        opti.subject_to(F_brake_regen <= 0)
-        opti.subject_to(F_brake_mech <= 0)
-
-        # =========================
-        # Friction ellipse
-        # =========================
-        term_long = (F_long_k / F_max_x)**2
-        term_lat  = (F_lat    / F_max_y)**2
-        opti.subject_to(term_long + term_lat <= 1)
-
-        #SoC
-        E_left = self.car.acp_capacity - E[:-1]
-        SoC = E_left/self.car.acp_capacity
-
-        # =========================
-        # Dynamics
-        # =========================
-        F_net = F_long_k - F_drag
-        acc = F_net / p_weight
-
-        # Speed integration: v^2 = v0^2 + 2*a*ds
-        v_next_sq = v_k**2 + 2 * acc * ds
-        opti.subject_to(v[1:]**2 == v_next_sq)
-
-        # Time integration: T = T0 + ds/v
-        opti.subject_to(T[1:] == T[:-1] + ds / v_k)
-
-        # Recuperation limit at given SoC
-        recuperation_max = self.car.get_recuperation_limit(SoC)
-
-        P_recuperated = -F_brake_regen*v_k
-
-        opti.subject_to(P_recuperated/recuperation_max <= 1)
-        opti.subject_to((-F_brake_mech*v_k)/self.car.brake_max <= 1)
-        opti.subject_to(F_brake/self.car.brake_max <= 1)
-        
-        #brakeP = -F_brake * v_k
-        #P_recuperated = ca.fmin(brakeP, recuperation_max)
-
-        energy_consumed = (F_acc * ds) / self.car.power_eff
-        
-        energy_saved = P_recuperated * self.car.regen_eff * (ds / v_k) * 0.94 #0.94 is fixed regen factor extracted from data
+def calculate_initial_guess(car,track, init_cond: InitConditions, ds=1.0):
+        #creates warm start for the solver based on simple forward-backward integration and curve speed limits
        
-        dE_step = energy_consumed - energy_saved
-
-        # Integrace do kWh
-        opti.subject_to(E[1:] == E[:-1] + dE_step / 3.6e6)
-
-        # =========================
-        # Torque limit (30 Nm per wheel)
-        # =========================
-        opti.subject_to(
-            ((self.car.wheel_radius * F_acc)) /
-            (self.car.max_torque * self.car.gear_ratio * 4) < 1
-        )
-
-        # =========================
-        # Power limit
-        # =========================
-
-        P_out = (F_acc * v_k) / self.car.power_eff
-
-        # Limit from SoC (dynamic)
-        P_max_dynamic = self.car.soc_to_power_interp(SoC)
-        opti.subject_to(P_out <= P_max_dynamic)
-
-        # Hard limit
-        opti.subject_to(P_out <= self.car.power_max)
-
-        # Bounding SoC
-        opti.subject_to(SoC >= 0.0)
-
-        # brake limit
-        #opti.subject_to((brakeP * self.car.regen_eff) / self.car.brake_max <= 1)
-
-        # Speed limits
-        opti.subject_to(v >= 1.0)  # avoid division by zero
-
-        # =========================
-        # Initial conditions
-        # =========================
-        opti.subject_to(v[0] == init_cond.v)
-        opti.subject_to(T[0] == init_cond.T)
-        opti.subject_to(E[0] == init_cond.E)
+        total_length = track.length
+        N = int(np.round(total_length / ds))
+        s_sim = np.linspace(0, total_length, N + 1)
         
-        opti.subject_to(drs[0] == 0)  # start with DRS closed
-
-        # =========================
-        # Energy limitation
-        # =========================
-   
-        if self.car.energy_limit is not None:
-            opti.subject_to(E[-1]-init_cond.E <= self.car.energy_limit)
-
-        # =========================
-        # Objective function
-        # =========================
-        J_Time = T[-1]
-
-        F_norm_factor = (self.car.weight * self.car.g)**2
-        J_overlap = 0.004 * ca.sum1((F_acc * -F_brake) / F_norm_factor)
-
-        J_final_v = 0.1 * v[-1]
-
-        J_drs_binary = 0.002 * ca.sum1(drs * (1 - drs))
-
-        opti.minimize(J_Time + J_overlap - J_final_v)
-
-        # =========================
-        # Initial guess
-        # =========================
-        opti.set_initial(v, 15.0)
-        opti.set_initial(F_acc, 100.0)
-
-        # =========================
-        # Solver setup
-        # =========================
-        p_opts = {"expand": True}
-        s_opts = {"max_iter": 2600, "tol": 1e-2, "print_level": 5}
-
-        opti.solver("ipopt", p_opts, s_opts)
-
-        try:
-            sol = opti.solve()
-
-            # =========================
-            # Sensitivity analysis
-            # =========================
-            L = opti.f + ca.dot(opti.lam_g, opti.g)
-
-            sens_w   = sol.value(ca.jacobian(L, p_weight))
-            sens_cl  = sol.value(ca.jacobian(L, p_cl))
-            sens_cd  = sol.value(ca.jacobian(L, p_cd))
-         
-            print("sensitivity results")
-            print(f"Weight: {sens_w:+.4f} s/kg")
-            print(f"CL:   {sens_cl:+.4f} s/unit")
-            print(f"CdA:  {sens_cd:+.4f} s/unit")
-
-            return SolverResults(
-                success=True,
-                lap_time=sol.value(T[-1]),
-                t=sol.value(T),
-                v=sol.value(v),
-                s=s_sim,
-                E=sol.value(E),
-                SoC=sol.value(SoC)*100,
-                f_acc=sol.value(F_acc) / self.car.power_eff,
-                f_brake=sol.value(F_brake),
-                recuperation=sol.value(P_recuperated*self.car.regen_eff),
-                drs_usage=sol.value(drs_ef),
-                sens={
-                    "dTime_dm": sens_w,
-                    "dTime_dCL": sens_cl,
-                    "dTime_dCdA": sens_cd,
-                }
-            )
-
-        except RuntimeError as e:
-            print(f"Solver failed: {e}")
-            return SolverResults(False, 0, [], [], [], [], [], [], {})
+        ds_const = total_length / N 
         
-    def solveLap_rk4(self, init_cond: InitConditions, init_guess=None, ds=0.5):
+        kappa_dm = track.get_curvature(s_sim)
+        kappa = np.array(kappa_dm).flatten()
+        
+        m = car.weight
+        g = 9.81
+        rho = 1.225
+        Cl = car.cl
+        Cd = car.cd
+        mu_x = car.mu_x - 0.1
+        mu_y = car.mu_y - 0.1
+        P_max = car.power_max-5000
+        F_max_abs = 8000
+        
+    
+        #curve limits vectorized
+        denom = m * np.abs(kappa) - mu_y * 0.5 * rho * Cl
+        
+      
+        v_max_car = 40.0 
+        v_curve = np.full(N+1, v_max_car)
+        
+        
+        mask = denom > 0
+        v_sq_limit = (mu_y * m * g) / denom[mask]
+        v_curve[mask] = np.sqrt(v_sq_limit)
+        
+    
+        v_curve = np.minimum(v_curve, v_max_car)
+
+        #forward integration (acceleration)
+        v_fwd = np.zeros(N+1)
+        v_fwd[0] = max(init_cond.v, 3.0) 
+        
+        for k in range(N):
+            v_curr = v_fwd[k]
+            
+            # Aero Drag
+            F_drag = 0.5 * rho * Cd * v_curr**2
+            
+            # Grip: F_z = m*g + AeroDown
+            F_z = m*g + 0.5 * rho * Cl * v_curr**2
+            F_grip = mu_x * F_z
+            
+            # Power: P = F*v -> F = P/v
+            F_power = P_max / max(v_curr, 2.0) * car.power_eff
+            
+            # Useable accel force
+            F_acc_max = min(F_grip, F_power, F_max_abs)
+            
+            # Net force & accel
+            F_net = F_acc_max - F_drag
+            acc = F_net / m
+            
+            # kinematics
+            v_next = np.sqrt(max(v_curr**2 + 2 * acc * ds_const, 1.0))
+            
+            # limit by curve
+            v_fwd[k+1] = min(v_next, v_curve[k+1])
+
+        # backward integration (braking)
+        v_bwd = np.zeros(N+1)
+        v_bwd[-1] = v_curve[-1] 
+        
+        for k in range(N, 0, -1):
+            v_curr = v_bwd[k] 
+            
+            # Aero
+            F_drag = 0.5 * rho * Cd * v_curr**2
+            F_z = m*g + 0.5 * rho * Cl * v_curr**2
+            
+            # Max Brake Force
+            F_grip = mu_x * F_z
+            F_brake_max = min(F_grip, F_max_abs) 
+                    
+            acc_back = (F_brake_max + F_drag) / m
+            
+            v_prev = np.sqrt(v_curr**2 + 2 * acc_back * ds_const)
+            
+            # Min (Backward, Forward, Curve)
+            v_bwd[k-1] = min(v_prev, v_curve[k-1], v_fwd[k-1])
+
+        # Final velocity profile
+        v_guess = v_bwd 
+        
+        #smoothing for IPOPT
+        window_size = 5
+        v_smooth = np.convolve(v_guess, np.ones(window_size)/window_size, mode='same')
+        v_smooth[0] = v_guess[0] 
+        v_smooth[-1] = v_guess[-1] 
+        
+        #calculate forces and energy for the guess
+        v_sq_diff = np.diff(v_smooth**2)
+        acc_req = v_sq_diff / (2 * ds_const)
+        
+        v_mid = 0.5 * (v_smooth[:-1] + v_smooth[1:])
+        
+        # Drag
+        F_drag_vec = 0.5 * rho * Cd * v_mid**2
+        
+        # F
+        F_net_req = m * acc_req
+        F_long_req = F_net_req + F_drag_vec
+        
+        # time
+        dt_vec = ds_const / np.maximum(v_mid, 1.0)
+        T_guess = np.concatenate(([0], np.cumsum(dt_vec))) + init_cond.T
+        
+        # Inputs splitting
+        F_acc_guess = np.maximum(F_long_req, 0)
+        F_brake_guess = np.minimum(F_long_req, 0)
+        
+        # Energy
+        P_mech = F_long_req * v_mid
+       
+        dE = P_mech * dt_vec / 3.6e6 
+        E_guess = np.concatenate(([init_cond.E], np.cumsum(dE) + init_cond.E))
+
+        return {
+            'v': np.array(v_smooth).flatten(),       
+            'T': np.array(T_guess).flatten(),        
+            'E': np.array(E_guess).flatten(),        
+            'F_acc': np.array(F_acc_guess).flatten(),   
+            'F_brake': np.array(F_brake_guess).flatten()
+        }
+--- KONEC SOUBORU: src\optimization\solvers\init_guess.py ---
+
+--- ZAČÁTEK SOUBORU: src\optimization\solvers\mass_point.py ---
+import casadi as ca
+import numpy as np
+from src.core.car import Car
+from src.optimization.solvers.base_solver import BaseSolver, SolverResults, InitConditions
+
+
+class MassPointSolver(BaseSolver):
+    def __init__(self, car, track):
+
+        super().__init__(car, track)
+
+    def solve(self, init_cond: InitConditions, init_guess=None, ds=0.5):
 
         opti = ca.Opti()
 
@@ -2254,7 +1748,7 @@ class MassPointSolver:
         # =========================
         # Aero
         # =========================
-        F_drag = Car.get_aero_drag(self.car, v_k, cd=cd_eff)
+       # F_drag = Car.get_aero_drag(self.car, v_k, cd=cd_eff)
 
         F_max_x, F_max_y = Car.get_friction_limit(
             self.car, v_k,
@@ -2295,12 +1789,11 @@ class MassPointSolver:
         opti.subject_to((-F_brake_mech*v_k)/self.car.brake_max <= 1)
         opti.subject_to(F_brake/self.car.brake_max <= 1)
 
-        # =========================
-        # Dynamics (RK4 Integration)
-        # =========================
-        # Pomocná funkce pro získání derivací stavů podle dráhy 's'
+  
+        # rk4 integration
+       
         def get_derivatives(v_val):
-            # Odpor se průběžně mění s rychlostí uvnitř RK4 sub-kroků
+            
             f_drag_step = Car.get_aero_drag(self.car, v_val, cd=cd_eff)
             f_net_step = F_long_k - f_drag_step
             acc_step = f_net_step / p_weight
@@ -2308,18 +1801,17 @@ class MassPointSolver:
             dv_ds = acc_step / v_val
             dT_ds = 1.0 / v_val
             
-            # Změna energie dE/ds na 1 metr (nezávisí na v, rychlost z výkonu se tu zkrátí)
             dE_ds = (F_acc / self.car.power_eff - (-F_brake_regen * self.car.regen_eff * 0.9)) / 3.6e6
             
             return dv_ds, dT_ds, dE_ds
 
-        # Výpočet koeficientů RK4 pro každý stav naráz (vektorizovaně přes CasADi graf)
+        
         k1_v, k1_T, k1_E = get_derivatives(v_k)
         k2_v, k2_T, k2_E = get_derivatives(v_k + 0.5 * ds * k1_v)
         k3_v, k3_T, k3_E = get_derivatives(v_k + 0.5 * ds * k2_v)
         k4_v, k4_T, k4_E = get_derivatives(v_k + ds * k3_v)
 
-        # Přechod na další krok
+       
         v_next = v_k + (ds / 6.0) * (k1_v + 2*k2_v + 2*k3_v + k4_v)
         T_next = T[:-1] + (ds / 6.0) * (k1_T + 2*k2_T + 2*k3_T + k4_T)
         E_next = E[:-1] + (ds / 6.0) * (k1_E + 2*k2_E + 2*k3_E + k4_E)
@@ -2353,7 +1845,7 @@ class MassPointSolver:
         opti.subject_to(SoC >= 0.0)
 
         # Speed limits
-        opti.subject_to(v >= 1.0)  # avoid division by zero
+        opti.subject_to(v >= 1.0)  
 
         # =========================
         # Initial conditions
@@ -2388,8 +1880,14 @@ class MassPointSolver:
         # =========================
         # Initial guess
         # =========================
-        opti.set_initial(v, 15.0)
-        opti.set_initial(F_acc, 100.0)
+        if init_guess is not None:
+            opti.set_initial(v, 0.9*init_guess['v'])
+            opti.set_initial(F_acc, 0.9*init_guess['F_acc'])
+           
+            
+        else:
+            opti.set_initial(v, 15.0)
+            opti.set_initial(F_acc, 100.0)
 
         # =========================
         # Solver setup
@@ -2439,427 +1937,29 @@ class MassPointSolver:
         except RuntimeError as e:
             print(f"Solver failed: {e}")
             return SolverResults(False, 0, [], [], [], [], [], [], {})
-        
+--- KONEC SOUBORU: src\optimization\solvers\mass_point.py ---
 
-class SingleTrackSolver:
-    def __init__(self, car, track, laps=1):
-        self.car = car
-        self.track = track
-        self.laps = laps
-
-    def solveLap(self, init_cond: InitConditions,init_guess=None, ds=1.0):
-        opti = ca.Opti()
-
-        # =========================
-        # Parameters
-        # =========================
-        p_mass = opti.parameter()
-        p_cl   = opti.parameter()
-        p_cd   = opti.parameter()
-        p_mu_x = opti.parameter()
-        p_mu_y = opti.parameter()
-
-        # Set params values
-        opti.set_value(p_mass, self.car.mass)
-        opti.set_value(p_cl,   self.car.cl)
-        opti.set_value(p_cd,   self.car.cd)
-        opti.set_value(p_mu_x, self.car.mu_x)
-        opti.set_value(p_mu_y, self.car.mu_y)
-
-        # =========================
-        # Track data & Grid
-        # =========================
-        total_length = self.track.length
-        N = int(np.round(total_length / ds))
-        
-        s_sim = np.linspace(0, total_length, N + 1)
-        ds_val = s_sim[1] - s_sim[0] # Actual uniform step
-        
-        # Curvature along the path
-        kappa_grid = self.track.get_curvature(s_sim[:-1]) # Curvature at steps 0..N-1
-
-        # =========================
-        # Variables (States at k=0..N)
-        # =========================
-        # Note: We use N+1 points for states, N for controls
-        vx  = opti.variable(N + 1) # Longitudinal speed
-        vy  = opti.variable(N + 1) # Lateral speed
-        r   = opti.variable(N + 1) # Yaw rate
-        n   = opti.variable(N + 1) # Lateral deviation
-        xi  = opti.variable(N + 1) # Heading error (psi - psi_track)
-        t   = opti.variable(N + 1) # Time
-        E   = opti.variable(N + 1) # Energy
-
-        # =========================
-        # Controls (at k=0..N-1)
-        # =========================
-        delta   = opti.variable(N) # Steering angle
-        F_acc   = opti.variable(N) # Drive force (at wheels)
-        F_brake = opti.variable(N) # Brake force (at wheels)
-        drs     = opti.variable(N) # DRS State
-
-        # =========================
-        # Helper / Constants
-        # =========================
-        # Track limits (Tunnel)
-        track_width_limit = 0.5 
-        opti.subject_to(opti.bounded(-track_width_limit, n, track_width_limit))
-
-        # Steering limits
-        opti.subject_to(opti.bounded(-self.car.steeringAngle_max, delta, self.car.steeringAngle_max))
-
-        # Speed limit (avoid singularity at 0)
-        opti.subject_to(vx >= 1.0) 
-
-        # Pedal constraints
-        opti.subject_to(F_acc >= 0)
-        opti.subject_to(F_brake <= 0)
-
-        # DRS Logic
-        use_drs_vec = False # Flag to control indexing inside loop
-
-        if self.car.drs_allowed and self.track.drs is not None:
-            drs_flag = self.track.get_drs_flag(s_sim[:-1])
-            drs_ef = drs * drs_flag
-            
-            cl_eff = p_cl + drs_ef * (self.car.cl_drs - p_cl)
-            cd_eff = p_cd + drs_ef * (self.car.cd_drs - p_cd)
-            use_drs_vec = True
-        else:
-            drs_ef = ca.DM.zeros(N)
-            cl_eff = p_cl # Scalar parameter
-            cd_eff = p_cd # Scalar parameter
-            opti.subject_to(drs == 0)
-            use_drs_vec = False #
-
-        opti.subject_to(drs >= 0)
-        opti.subject_to(drs <= 1)
-
-        # =========================
-        # DYNAMICS LOOP (Euler Integration)
-        # =========================
-        
-        # Slip limit for linear model validity (5 degrees in rad)
-        alpha_limit = 5.0 * (np.pi / 180.0)
-
-        for k in range(N):
-            # Current states
-            vx_k = vx[k]
-            vy_k = vy[k]
-            r_k  = r[k]
-            n_k  = n[k]
-            xi_k = xi[k]
-            t_k  = t[k]
-            
-            # Current inputs
-            delta_k   = delta[k]
-            F_acc_k   = F_acc[k]
-            F_brake_k = F_brake[k]
-            
-            curv_k = kappa_grid[k]
-
-            # 1. Force distribution
-            
-            Ff_acc = self.car.power_dist * F_acc_k
-            Fr_acc = (1.0 - self.car.power_dist) * F_acc_k
-            
-            Ff_brk = self.car.brake_bias * F_brake_k
-            Fr_brk = (1.0 - self.car.brake_bias) * F_brake_k
-            
-            Fx_f = Ff_acc + Ff_brk
-            Fx_r = Fr_acc + Fr_brk
-
-            # 2. Normal loads (fz)
-            
-            if use_drs_vec:
-                cl_k = cl_eff[k]
-                cd_k = cd_eff[k]
-            else:
-                cl_k = cl_eff 
-                cd_k = cd_eff
-
-            # Fz calculations
-            fz_aero = 0.5 * self.car.rho * cl_k * vx_k**2
-            fz_aero_f = fz_aero * (1 - self.car.cop)
-            fz_aero_r = fz_aero * self.car.cop
-            
-            Fz_f = self.car.fz_static_f + fz_aero_f
-            Fz_r = self.car.fz_static_r + fz_aero_r
-
-            # 3. Slip angles - kinematics
-            # alpha_f = -atan2(...)
-            # alpha_r = -atan2(...)
-            
-            # Front slip
-            vy_f_kin = (vy_k + self.car.lf * r_k)
-            alpha_f = -ca.atan2(
-                vy_f_kin * ca.cos(delta_k) - vx_k * ca.sin(delta_k),
-                vy_f_kin * ca.sin(delta_k) + vx_k * ca.cos(delta_k)
-            )
-
-            # Rear slip
-            vy_r_kin = (vy_k - self.car.lr * r_k)
-            alpha_r = -ca.atan2(vy_r_kin, vx_k)
-
-            # 4. Lateral forces
-            # Fy = (alpha_deg / 5.0) * Fz * mu_y
-            # Convert alpha to deg: alpha * 180/pi
-            # Formula: alpha_rad * (180/pi) / 5.0 * Fz * mu_y
-            #        = alpha_rad * (36.0/pi) * Fz * mu_y
-            
-            Fy_f_lin = alpha_f * (36.0 / np.pi) * Fz_f * p_mu_y
-            Fy_r_lin = alpha_r * (36.0 / np.pi) * Fz_r * p_mu_y
-
-            # 5. constraints
-            
-            # A) Hard limit on slip angle to keep linear model valid
-            opti.subject_to(opti.bounded(-alpha_limit, alpha_f, alpha_limit))
-            opti.subject_to(opti.bounded(-alpha_limit, alpha_r, alpha_limit))
-
-            # B) Friction ellipse 
-            # (Fx / Fx_max)^2 + (Fy / Fy_max)^2 <= 1
-            # Fx_max = mu_x * Fz, Fy_max = mu_y * Fz
-        
-            
-            mu_x_fz_f = p_mu_x * Fz_f
-            mu_y_fz_f = p_mu_y * Fz_f
-            
-            mu_x_fz_r = p_mu_x * Fz_r
-            mu_y_fz_r = p_mu_y * Fz_r
-
-            ellipse_f = (Fx_f / mu_x_fz_f)**2 + (Fy_f_lin / mu_y_fz_f)**2
-            ellipse_r = (Fx_r / mu_x_fz_r)**2 + (Fy_r_lin / mu_y_fz_r)**2
-            
-            opti.subject_to(ellipse_f <= 1.0)
-            opti.subject_to(ellipse_r <= 1.0)
-
-            # 6. Power & Torque Limits
-            # Torque: F_acc * radius / (ratio * 4) < max_torque (simplified per wheel check)
-            # But F_acc is total force. 
-            # Total Torque = F_acc * radius / ratio
-            # Check against engine max torque * gear ratio logic or simplier force limit
-            # Using your class params:
-            
-            # Power limit: P = F * v <= P_max
-            opti.subject_to( ((F_acc_k * vx_k) / self.car.power_eff)/self.car.power_max <= 1 )
-            
-            # Regen limit
-            opti.subject_to( ((-F_brake_k * vx_k) * self.car.regen_eff)/self.car.brake_max <= 1 )
-
-            # Torque limit (simplified force limit at wheel)
-            #max_force_torque = (self.car.max_torque * self.car.gear_ratio * 4) / self.car.wheel_radius
-            #opti.subject_to( F_acc_k <= max_force_torque )
-
-            # 7. Dynamics 
-            # Based on singletrack_path_ode logic
-            
-            # Drag
-            F_drag = 0.5 * self.car.rho * cd_k * vx_k**2 + self.car.fix_drag
-
-            # Body frame forces
-            # Sum forces in x and y direction
-            F_x_total = Fx_f * ca.cos(delta_k) - Fy_f_lin * ca.sin(delta_k) + Fx_r - F_drag
-            F_y_total = Fx_f * ca.sin(delta_k) + Fy_f_lin * ca.cos(delta_k) + Fy_r_lin
-            
-            # Moment
-            M_z = self.car.lf * (Fx_f * ca.sin(delta_k) + Fy_f_lin * ca.cos(delta_k)) - self.car.lr * Fy_r_lin
-
-            # Time derivatives (dt)
-            dvx_dt = F_x_total / p_mass + r_k * vy_k
-            dvy_dt = F_y_total / p_mass - r_k * vx_k
-            dr_dt  = M_z / self.car.Iz
-            
-            # Path scaling factor (Sf = dt/ds)
-            # d_psi/dt = r
-            # d_theta/dt = vx * curvature? No, d_theta/ds = curvature -> d_theta/dt = ds/dt * curvature
-            # We need Sf = 1 / (ds/dt)
-            # s_dot = (vx * cos(xi) - vy * sin(xi)) / (1 - n * curvature)
-            
-            # eps (in code) is xi (here). 
-            # Note: your code uses eps = psi - th. Here xi = psi - th.
-            s_dot_denom = (1.0 - n_k * curv_k)
-            s_dot_num   = (vx_k * ca.cos(xi_k) - vy_k * ca.sin(xi_k))
-            
-            # Avoid division by zero
-            ds_dt = s_dot_num / ca.fmax(s_dot_denom, 0.1)
-            Sf = 1.0 / ds_dt  # dt/ds
-
-            # Spatial derivatives (d/ds = d/dt * dt/ds)
-            dvx_ds = dvx_dt * Sf
-            dvy_ds = dvy_dt * Sf
-            dr_ds  = dr_dt  * Sf
-            dt_ds  = Sf
-            
-            # Kinematics in path coordinates
-            # dn/dt = vx * sin(xi) + vy * cos(xi)
-            dn_ds = (vx_k * ca.sin(xi_k) + vy_k * ca.cos(xi_k)) * Sf
-            
-            # dxi/ds = dpsi/ds - dtheta/ds = r * Sf - curvature
-            dxi_ds = r_k * Sf - curv_k
-
-            # Energy
-            dE_ds = ((F_acc_k / self.car.power_eff + F_brake_k * self.car.regen_eff) * Sf) / 3.6e6
-
-            # Euler Step
-            opti.subject_to(vx[k+1] == vx_k + dvx_ds * ds_val)
-            opti.subject_to(vy[k+1] == vy_k + dvy_ds * ds_val)
-            opti.subject_to(r[k+1]  == r_k  + dr_ds  * ds_val)
-            opti.subject_to(n[k+1]  == n_k  + dn_ds  * ds_val)
-            opti.subject_to(xi[k+1] == xi_k + dxi_ds * ds_val)
-            opti.subject_to(t[k+1]  == t_k  + dt_ds  * ds_val)
-            opti.subject_to(E[k+1] == E[k] + dE_ds * ds_val)
+--- ZAČÁTEK SOUBORU: src\optimization\solvers\mpcc.py ---
+import casadi as ca
+import numpy as np
+from src.core.car import Car
+from src.optimization.solvers.base_solver import BaseSolver, SolverResults, InitConditions
 
 
-        # =========================
-        # Boundary Conditions
-        # =========================
-        # Start
-        opti.subject_to(vx[0] == init_cond.v)
-        opti.subject_to(vy[0] == 0) # Assume 0 lateral speed at start
-        opti.subject_to(r[0]  == 0) # Assume 0 yaw rate at start (or match curvature)
-        opti.subject_to(n[0]  == init_cond.n)
-        opti.subject_to(xi[0] == init_cond.xi)
-        opti.subject_to(t[0]  == init_cond.T)
-        opti.subject_to(E[0]  == init_cond.E)
 
-        # Cyclic condition (if needed, enable for closed track)
-        # opti.subject_to(vx[0] == vx[-1])
-        
-        # Energy limit
-        if self.car.energy_limit is not None:
-            opti.subject_to(E[-1] <= self.car.energy_limit)
+#does not work, i leave it here only for reference, it was an attempt but ended up being too slow and not converging well, you might want to use some of this code if you want to implement a working MPCC in the future
 
-        # =========================
-        # Objective function
-        # =========================
-        J_Time = t[-1]
-        
-        # Regularization terms
-        # 1. Steering Rate (smooth steering)
-        # sum (delta_k - delta_k-1)^2
-        diff_delta = delta[1:] - delta[:-1]
-        J_steer_rate = 7e-4 * ca.sumsqr(diff_delta)
-        
-        # 2. Acceleration smoothness (throttle smoothing)
-        diff_acc = F_acc[1:] - F_acc[:-1]
-        J_acc_smooth = 1e-3 * ca.sumsqr(diff_acc) / 1000.0 # Scale down force magnitude
 
-        # 3. Path deviation (stay close to center/opt line)
-        J_path = 0.5 * ca.sumsqr(n)
-        #0.5 funguje mega dobre
+class MPCC_Solver(BaseSolver):
+    def __init__(self, car, track):
 
-    
-        opti.minimize(J_Time+J_path+J_steer_rate)
-        #opti.minimize(J_Time)
+        super().__init__(car, track)
 
-        # =========================
-        # Initial guess 
-        # =========================
-   
-        # Mapping guess to variables
-        # Note: guess arrays might be slightly different length due to float math, strict check needed
-        g_vx = init_guess['v']
-        g_n  = init_guess['n']
-        g_xi = init_guess['xi']
-        g_r  = init_guess['r']
-        g_t  = init_guess['t']
-        g_delta = init_guess['delta']
-        g_facc  = init_guess['F_acc']
-        g_fbrk  = init_guess['F_brake']
 
-        # set initial (handling minimal length mismatch if any)
-        L_state = min(len(g_vx), N + 1)
-        opti.set_initial(vx[:L_state], g_vx[:L_state])
-        opti.set_initial(vy[:L_state], 0.0) # Start with 0 slip
-        opti.set_initial(n[:L_state],  g_n[:L_state])
-        opti.set_initial(xi[:L_state], g_xi[:L_state])
-        opti.set_initial(r[:L_state],  g_r[:L_state])
-        opti.set_initial(t[:L_state],  g_t[:L_state])
-        
-        L_ctrl = min(len(g_delta), N)
-        opti.set_initial(delta[:L_ctrl], g_delta[:L_ctrl])
-        opti.set_initial(F_acc[:L_ctrl], g_facc[:L_ctrl])
-        opti.set_initial(F_brake[:L_ctrl], g_fbrk[:L_ctrl])
 
-        # =========================
-        # Solver
-        # =========================
-        p_opts = {"expand": True}
-        s_opts = {
-            "max_iter": 3000, 
-            "tol": 1e-3, 
-            "print_level": 5, 
-            "mu_strategy": "adaptive" 
-        }
-        opti.solver("ipopt", p_opts, s_opts)
 
-        try:
-            sol = opti.solve()
-            
-            # --- Post processing / Sensitivities ---
-            L_lagrange = opti.f + ca.dot(opti.lam_g, opti.g)
-            sens_m = sol.value(ca.jacobian(L_lagrange, p_mass))
-            sens_cl = sol.value(ca.jacobian(L_lagrange, p_cl))
-            
-            # Calculate alphas for result (re-evaluate expressions)
-            # We can't easily get them from 'sol' directly as they are intermediate expressions
-            # so we assume user can recalc them from states if needed, or we compute approximate:
-            res_vx = sol.value(vx)
-            res_vy = sol.value(vy)
-            res_r  = sol.value(r)
-            res_delta = sol.value(delta)
-            
-            # Recompute alphas for output (k=0..N-1)
-            # (Simplified re-calculation for visualization)
-            res_alpha_f = []
-            res_alpha_r = []
-            for k in range(N):
-                v_x, v_y, yaw_r, delt = res_vx[k], res_vy[k], res_r[k], res_delta[k]
-                vy_f = v_y + self.car.lf * yaw_r
-                af = -np.arctan2(vy_f * np.cos(delt) - v_x * np.sin(delt), vy_f * np.sin(delt) + v_x * np.cos(delt))
-                vy_r = v_y - self.car.lr * yaw_r
-                ar = -np.arctan2(vy_r, v_x)
-                res_alpha_f.append(af)
-                res_alpha_r.append(ar)
 
-            return SolverResults(
-                success=True,
-                lap_time=sol.value(t[-1]),
-                t=sol.value(t),
-                v=sol.value(vx), # approx total speed
-                s=s_sim,
-                f_acc=sol.value(F_acc) / self.car.power_eff,
-                f_brake=sol.value(F_brake) * self.car.regen_eff,
-                delta=sol.value(delta),
-                vx=res_vx,
-                vy=res_vy,
-                r=res_r,
-                n=sol.value(n),
-                xi=sol.value(xi),
-                alpha_f=np.array(res_alpha_f),
-                alpha_r=np.array(res_alpha_r),
-                E=sol.value(E),
-                drs_usage=sol.value(drs_ef),
-                sens={"dTime_dm": sens_m, "dTime_dCL": sens_cl}
-            )
-
-        except RuntimeError as e:
-            print(f"Solver failed: {e}")
-            # Return partial results (debug values) if available
-            return SolverResults(False, 0.0, [], [], [], [], [], [], {}, mu_x=self.car.mu_x, mu_y=self.car.mu_y)
-
-class MPCC_Solver:
-    def __init__(self,car,track,endurance=False,laps=1):
-
-        self.car = car
-        self.track = track
-        self.laps = laps
-        self.endurance = endurance
-        
-        if self.endurance:
-            self.target_lap = car.acp_capacity/laps
-
-    def solveLap(self, init_cond: InitConditions, init_guess=None, ds=0.5):
+def solve(self, init_cond: InitConditions, init_guess=None, ds=0.5):
 
         opti = ca.Opti()
 
@@ -3118,9 +2218,411 @@ class MPCC_Solver:
         except RuntimeError as e:
             print(f"Solver failed: {e}")
             return SolverResults(False, 0, [], [], [], [], [], [], {})
+--- KONEC SOUBORU: src\optimization\solvers\mpcc.py ---
+
+--- ZAČÁTEK SOUBORU: src\optimization\solvers\single_track.py ---
+import casadi as ca
+import numpy as np
+from src.core.car import Car
+from src.optimization.solvers.base_solver import BaseSolver, SolverResults, InitConditions
+
+#does not work, i leave it here only for reference, it was an attempt but ended up being too slow and not converging well, you might want to use some of this code if you want to implement a working MPCC in the future
+
+class SingleTrackSolver(BaseSolver):
+    def __init__(self, car, track):
+
+        super().__init__(car, track)
+
+    def solve(self, init_cond: InitConditions,init_guess=None, ds=1.0):
+        opti = ca.Opti()
+
+        # =========================
+        # Parameters
+        # =========================
+        p_mass = opti.parameter()
+        p_cl   = opti.parameter()
+        p_cd   = opti.parameter()
+        p_mu_x = opti.parameter()
+        p_mu_y = opti.parameter()
+
+        # Set params values
+        opti.set_value(p_mass, self.car.mass)
+        opti.set_value(p_cl,   self.car.cl)
+        opti.set_value(p_cd,   self.car.cd)
+        opti.set_value(p_mu_x, self.car.mu_x)
+        opti.set_value(p_mu_y, self.car.mu_y)
+
+        # =========================
+        # Track data & Grid
+        # =========================
+        total_length = self.track.length
+        N = int(np.round(total_length / ds))
+        
+        s_sim = np.linspace(0, total_length, N + 1)
+        ds_val = s_sim[1] - s_sim[0] # Actual uniform step
+        
+        # Curvature along the path
+        kappa_grid = self.track.get_curvature(s_sim[:-1]) # Curvature at steps 0..N-1
+
+        # =========================
+        # Variables (States at k=0..N)
+        # =========================
+        # Note: We use N+1 points for states, N for controls
+        vx  = opti.variable(N + 1) # Longitudinal speed
+        vy  = opti.variable(N + 1) # Lateral speed
+        r   = opti.variable(N + 1) # Yaw rate
+        n   = opti.variable(N + 1) # Lateral deviation
+        xi  = opti.variable(N + 1) # Heading error (psi - psi_track)
+        t   = opti.variable(N + 1) # Time
+        E   = opti.variable(N + 1) # Energy
+
+        # =========================
+        # Controls (at k=0..N-1)
+        # =========================
+        delta   = opti.variable(N) # Steering angle
+        F_acc   = opti.variable(N) # Drive force (at wheels)
+        F_brake = opti.variable(N) # Brake force (at wheels)
+        drs     = opti.variable(N) # DRS State
+
+        # =========================
+        # Helper / Constants
+        # =========================
+        # Track limits (Tunnel)
+        track_width_limit = 0.5 
+        opti.subject_to(opti.bounded(-track_width_limit, n, track_width_limit))
+
+        # Steering limits
+        opti.subject_to(opti.bounded(-self.car.steeringAngle_max, delta, self.car.steeringAngle_max))
+
+        # Speed limit (avoid singularity at 0)
+        opti.subject_to(vx >= 1.0) 
+
+        # Pedal constraints
+        opti.subject_to(F_acc >= 0)
+        opti.subject_to(F_brake <= 0)
+
+        # DRS Logic
+        use_drs_vec = False # Flag to control indexing inside loop
+
+        if self.car.drs_allowed and self.track.drs is not None:
+            drs_flag = self.track.get_drs_flag(s_sim[:-1])
+            drs_ef = drs * drs_flag
+            
+            cl_eff = p_cl + drs_ef * (self.car.cl_drs - p_cl)
+            cd_eff = p_cd + drs_ef * (self.car.cd_drs - p_cd)
+            use_drs_vec = True
+        else:
+            drs_ef = ca.DM.zeros(N)
+            cl_eff = p_cl # Scalar parameter
+            cd_eff = p_cd # Scalar parameter
+            opti.subject_to(drs == 0)
+            use_drs_vec = False #
+
+        opti.subject_to(drs >= 0)
+        opti.subject_to(drs <= 1)
+
+        
+        # Slip limit for linear model validity (5 degrees in rad)
+        alpha_limit = 5.0 * (np.pi / 180.0)
+
+        for k in range(N):
+            # Current states
+            vx_k = vx[k]
+            vy_k = vy[k]
+            r_k  = r[k]
+            n_k  = n[k]
+            xi_k = xi[k]
+            t_k  = t[k]
+            
+            # Current inputs
+            delta_k   = delta[k]
+            F_acc_k   = F_acc[k]
+            F_brake_k = F_brake[k]
+            
+            curv_k = kappa_grid[k]
+
+            # 1. Force distribution
+            
+            Ff_acc = self.car.power_dist * F_acc_k
+            Fr_acc = (1.0 - self.car.power_dist) * F_acc_k
+            
+            Ff_brk = self.car.brake_bias * F_brake_k
+            Fr_brk = (1.0 - self.car.brake_bias) * F_brake_k
+            
+            Fx_f = Ff_acc + Ff_brk
+            Fx_r = Fr_acc + Fr_brk
+
+            # 2. Normal loads (fz)
+            
+            if use_drs_vec:
+                cl_k = cl_eff[k]
+                cd_k = cd_eff[k]
+            else:
+                cl_k = cl_eff 
+                cd_k = cd_eff
+
+            # Fz calculations
+            fz_aero = 0.5 * self.car.rho * cl_k * vx_k**2
+            fz_aero_f = fz_aero * (1 - self.car.cop)
+            fz_aero_r = fz_aero * self.car.cop
+            
+            Fz_f = self.car.fz_static_f + fz_aero_f
+            Fz_r = self.car.fz_static_r + fz_aero_r
+
+            # 3. Slip angles - kinematics
+            # alpha_f = -atan2(...)
+            # alpha_r = -atan2(...)
+            
+            # Front slip
+            vy_f_kin = (vy_k + self.car.lf * r_k)
+            alpha_f = -ca.atan2(
+                vy_f_kin * ca.cos(delta_k) - vx_k * ca.sin(delta_k),
+                vy_f_kin * ca.sin(delta_k) + vx_k * ca.cos(delta_k)
+            )
+
+            # Rear slip
+            vy_r_kin = (vy_k - self.car.lr * r_k)
+            alpha_r = -ca.atan2(vy_r_kin, vx_k)
+
+            # 4. Lateral forces
+            # Fy = (alpha_deg / 5.0) * Fz * mu_y
+            # Convert alpha to deg: alpha * 180/pi
+            # Formula: alpha_rad * (180/pi) / 5.0 * Fz * mu_y
+            #        = alpha_rad * (36.0/pi) * Fz * mu_y
+            
+            Fy_f_lin = alpha_f * (36.0 / np.pi) * Fz_f * p_mu_y
+            Fy_r_lin = alpha_r * (36.0 / np.pi) * Fz_r * p_mu_y
+
+            # 5. constraints
+            
+            # A) Hard limit on slip angle to keep linear model valid
+            opti.subject_to(opti.bounded(-alpha_limit, alpha_f, alpha_limit))
+            opti.subject_to(opti.bounded(-alpha_limit, alpha_r, alpha_limit))
+
+            # B) Friction ellipse 
+            # (Fx / Fx_max)^2 + (Fy / Fy_max)^2 <= 1
+            # Fx_max = mu_x * Fz, Fy_max = mu_y * Fz
+        
+            
+            mu_x_fz_f = p_mu_x * Fz_f
+            mu_y_fz_f = p_mu_y * Fz_f
+            
+            mu_x_fz_r = p_mu_x * Fz_r
+            mu_y_fz_r = p_mu_y * Fz_r
+
+            ellipse_f = (Fx_f / mu_x_fz_f)**2 + (Fy_f_lin / mu_y_fz_f)**2
+            ellipse_r = (Fx_r / mu_x_fz_r)**2 + (Fy_r_lin / mu_y_fz_r)**2
+            
+            opti.subject_to(ellipse_f <= 1.0)
+            opti.subject_to(ellipse_r <= 1.0)
+
+            
+            # Power limit: P = F * v <= P_max
+            opti.subject_to( ((F_acc_k * vx_k) / self.car.power_eff)/self.car.power_max <= 1 )
+            
+            # Regen limit
+            opti.subject_to( ((-F_brake_k * vx_k) * self.car.regen_eff)/self.car.brake_max <= 1 )
+
+        
+            # Drag
+            F_drag = 0.5 * self.car.rho * cd_k * vx_k**2 + self.car.fix_drag
+
+            # Body frame forces
+            # Sum forces in x and y direction
+            F_x_total = Fx_f * ca.cos(delta_k) - Fy_f_lin * ca.sin(delta_k) + Fx_r - F_drag
+            F_y_total = Fx_f * ca.sin(delta_k) + Fy_f_lin * ca.cos(delta_k) + Fy_r_lin
+            
+            # Moment
+            M_z = self.car.lf * (Fx_f * ca.sin(delta_k) + Fy_f_lin * ca.cos(delta_k)) - self.car.lr * Fy_r_lin
+
+            # Time derivatives (dt)
+            dvx_dt = F_x_total / p_mass + r_k * vy_k
+            dvy_dt = F_y_total / p_mass - r_k * vx_k
+            dr_dt  = M_z / self.car.Iz
+            
+            # Path scaling factor (Sf = dt/ds)
+            # d_psi/dt = r
+            # d_theta/dt = vx * curvature? No, d_theta/ds = curvature -> d_theta/dt = ds/dt * curvature
+            # We need Sf = 1 / (ds/dt)
+            # s_dot = (vx * cos(xi) - vy * sin(xi)) / (1 - n * curvature)
+            
+            # eps (in code) is xi (here). 
+           
+            s_dot_denom = (1.0 - n_k * curv_k)
+            s_dot_num   = (vx_k * ca.cos(xi_k) - vy_k * ca.sin(xi_k))
+            
+            # Avoid division by zero
+            ds_dt = s_dot_num / ca.fmax(s_dot_denom, 0.1)
+            Sf = 1.0 / ds_dt  # dt/ds
+
+            # Spatial derivatives (d/ds = d/dt * dt/ds)
+            dvx_ds = dvx_dt * Sf
+            dvy_ds = dvy_dt * Sf
+            dr_ds  = dr_dt  * Sf
+            dt_ds  = Sf
+            
+            # Kinematics in path coordinates
+            # dn/dt = vx * sin(xi) + vy * cos(xi)
+            dn_ds = (vx_k * ca.sin(xi_k) + vy_k * ca.cos(xi_k)) * Sf
+            
+            # dxi/ds = dpsi/ds - dtheta/ds = r * Sf - curvature
+            dxi_ds = r_k * Sf - curv_k
+
+            # Energy
+            dE_ds = ((F_acc_k / self.car.power_eff + F_brake_k * self.car.regen_eff) * Sf) / 3.6e6
+
+            # Euler Step
+            opti.subject_to(vx[k+1] == vx_k + dvx_ds * ds_val)
+            opti.subject_to(vy[k+1] == vy_k + dvy_ds * ds_val)
+            opti.subject_to(r[k+1]  == r_k  + dr_ds  * ds_val)
+            opti.subject_to(n[k+1]  == n_k  + dn_ds  * ds_val)
+            opti.subject_to(xi[k+1] == xi_k + dxi_ds * ds_val)
+            opti.subject_to(t[k+1]  == t_k  + dt_ds  * ds_val)
+            opti.subject_to(E[k+1] == E[k] + dE_ds * ds_val)
 
 
-class StrategyMaker:
+        # =========================
+        # Boundary Conditions
+        # =========================
+        # Start
+        opti.subject_to(vx[0] == init_cond.v)
+        opti.subject_to(vy[0] == 0) # Assume 0 lateral speed at start
+        opti.subject_to(r[0]  == 0) # Assume 0 yaw rate at start (or match curvature)
+        opti.subject_to(n[0]  == init_cond.n)
+        opti.subject_to(xi[0] == init_cond.xi)
+        opti.subject_to(t[0]  == init_cond.T)
+        opti.subject_to(E[0]  == init_cond.E)
+
+        # Cyclic condition (if needed, enable for closed track)
+        # opti.subject_to(vx[0] == vx[-1])
+        
+        # Energy limit
+        if self.car.energy_limit is not None:
+            opti.subject_to(E[-1] <= self.car.energy_limit)
+
+        # =========================
+        # Objective function
+        # =========================
+        J_Time = t[-1]
+        
+        # Regularization terms
+        # 1. Steering Rate (smooth steering)
+        # sum (delta_k - delta_k-1)^2
+        diff_delta = delta[1:] - delta[:-1]
+        J_steer_rate = 7e-4 * ca.sumsqr(diff_delta)
+        
+        # 2. Acceleration smoothness (throttle smoothing)
+        diff_acc = F_acc[1:] - F_acc[:-1]
+        J_acc_smooth = 1e-3 * ca.sumsqr(diff_acc) / 1000.0 # Scale down force magnitude
+
+        # 3. Path deviation (stay close to center/opt line)
+        J_path = 0.5 * ca.sumsqr(n)
+        #0.5 funguje mega dobre
+
+    
+        opti.minimize(J_Time+J_path+J_steer_rate)
+        #opti.minimize(J_Time)
+
+        # =========================
+        # Initial guess 
+        # =========================
+   
+        # Mapping guess to variables
+       
+        g_vx = init_guess['v']
+        g_n  = init_guess['n']
+        g_xi = init_guess['xi']
+        g_r  = init_guess['r']
+        g_t  = init_guess['t']
+        g_delta = init_guess['delta']
+        g_facc  = init_guess['F_acc']
+        g_fbrk  = init_guess['F_brake']
+
+        # set initial (handling minimal length mismatch if any)
+        L_state = min(len(g_vx), N + 1)
+        opti.set_initial(vx[:L_state], g_vx[:L_state])
+        opti.set_initial(vy[:L_state], 0.0) # Start with 0 slip
+        opti.set_initial(n[:L_state],  g_n[:L_state])
+        opti.set_initial(xi[:L_state], g_xi[:L_state])
+        opti.set_initial(r[:L_state],  g_r[:L_state])
+        opti.set_initial(t[:L_state],  g_t[:L_state])
+        
+        L_ctrl = min(len(g_delta), N)
+        opti.set_initial(delta[:L_ctrl], g_delta[:L_ctrl])
+        opti.set_initial(F_acc[:L_ctrl], g_facc[:L_ctrl])
+        opti.set_initial(F_brake[:L_ctrl], g_fbrk[:L_ctrl])
+
+        # =========================
+        # Solver
+        # =========================
+        p_opts = {"expand": True}
+        s_opts = {
+            "max_iter": 3000, 
+            "tol": 1e-3, 
+            "print_level": 5, 
+            "mu_strategy": "adaptive" 
+        }
+        opti.solver("ipopt", p_opts, s_opts)
+
+        try:
+            sol = opti.solve()
+            
+            # --- Post processing / Sensitivities ---
+            L_lagrange = opti.f + ca.dot(opti.lam_g, opti.g)
+            sens_m = sol.value(ca.jacobian(L_lagrange, p_mass))
+            sens_cl = sol.value(ca.jacobian(L_lagrange, p_cl))
+        
+            res_vx = sol.value(vx)
+            res_vy = sol.value(vy)
+            res_r  = sol.value(r)
+            res_delta = sol.value(delta)
+            
+            # Recompute alphas for output (k=0..N-1)
+            # (Simplified re-calculation for visualization)
+            res_alpha_f = []
+            res_alpha_r = []
+            for k in range(N):
+                v_x, v_y, yaw_r, delt = res_vx[k], res_vy[k], res_r[k], res_delta[k]
+                vy_f = v_y + self.car.lf * yaw_r
+                af = -np.arctan2(vy_f * np.cos(delt) - v_x * np.sin(delt), vy_f * np.sin(delt) + v_x * np.cos(delt))
+                vy_r = v_y - self.car.lr * yaw_r
+                ar = -np.arctan2(vy_r, v_x)
+                res_alpha_f.append(af)
+                res_alpha_r.append(ar)
+
+            return SolverResults(
+                success=True,
+                lap_time=sol.value(t[-1]),
+                t=sol.value(t),
+                v=sol.value(vx), # approx total speed
+                s=s_sim,
+                f_acc=sol.value(F_acc) / self.car.power_eff,
+                f_brake=sol.value(F_brake) * self.car.regen_eff,
+                delta=sol.value(delta),
+                vx=res_vx,
+                vy=res_vy,
+                r=res_r,
+                n=sol.value(n),
+                xi=sol.value(xi),
+                alpha_f=np.array(res_alpha_f),
+                alpha_r=np.array(res_alpha_r),
+                E=sol.value(E),
+                drs_usage=sol.value(drs_ef),
+                sens={"dTime_dm": sens_m, "dTime_dCL": sens_cl}
+            )
+
+        except RuntimeError as e:
+            print(f"Solver failed: {e}")
+            # Return partial results (debug values) if available
+            return SolverResults(False, 0.0, [], [], [], [], [], [], {}, mu_x=self.car.mu_x, mu_y=self.car.mu_y)
+--- KONEC SOUBORU: src\optimization\solvers\single_track.py ---
+
+--- ZAČÁTEK SOUBORU: src\optimization\solvers\strategy_maker.py ---
+import casadi as ca
+from src.optimization.solvers.base_solver import BaseSolver
+
+
+class StrategyMaker(BaseSolver):
 
     def __init__(self,car,laptime_map,laps,e_target_min,e_target_max):
         self.car = car
@@ -3132,6 +2634,7 @@ class StrategyMaker:
  
 
     def ef_guess(self,energy_target_endurance):
+        #this function is used only as a backup if solver fails
         #simulate the car with x kWh with max regen to estimate winning EF_score
         N = self.laps
         total_time = 0
@@ -3154,6 +2657,7 @@ class StrategyMaker:
     
 
     def best_T_guess(self,delta):
+        #this function is used only as a backup if solver fails
         #simulate the car with full energy usage to simulate best time
         N = self.laps
         total_time = 0
@@ -3174,7 +2678,7 @@ class StrategyMaker:
         return total_time*(1-delta)
     
     def getPoints(self,regen,energy_target,delta,ef_min,t_min):
-
+         #this function is used only as a backup if solver fails
         total_time = 0
         SoC_start = 1.0
         energy_target_lap = energy_target/self.laps
@@ -3242,9 +2746,7 @@ class StrategyMaker:
 
             MIN_SOC = 0.11
 
-            # ==========================================
-            # 3. Počáteční podmínky
-            # ==========================================
+    
             opti.subject_to(SoC[0] == SoC_start) 
         
 
@@ -3271,17 +2773,13 @@ class StrategyMaker:
             opti.subject_to(E_lap <= self.e_target_max) 
 
 
-            # === INITIAL GUESS ===
             E_guess = 0.25
             opti.set_initial(E_lap, E_guess)
             opti.set_initial(SoC_start, 1.0)
             soc_guess = [1.0 - k * (E_guess / self.car.acp_capacity) for k in range(N + 1)]
             opti.set_initial(SoC, soc_guess)
            
-        
-            # ==========================================
-            # Konstanty pro výpočty 
-            # ==========================================
+     
             
             T_max = 1.5 * T_min # Podle tabulky 11 v pravidlech
             
@@ -3341,13 +2839,12 @@ class StrategyMaker:
                 
                 sol = opti.solve()
                 
-                print(f"Celkový čas: {sol.value(total_time):.2f} s")
+                print(f"Total time: {sol.value(total_time):.2f} s")
                 
-                # Extrakce optimálních hodnot
+               
                 opt_soc = sol.value(SoC)
                 opt_e_targets = sol.value(E_lap)
                 
-                # Ošetření pro případ, že N=1 (CasADi vrací skalár místo pole)
                 if N == 1:
                     opt_e_targets = [opt_e_targets]
                     opt_soc = [opt_soc, sol.value(SoC)[1]]
@@ -3356,20 +2853,20 @@ class StrategyMaker:
                 
                
                 for k in range(N):
-                    # Extrakce konkrétních hodnot pro toto kolo
+                    
                     soc_k = float(opt_soc[k])
                     e_k = float(opt_e_targets[k])
                     regen_k = float(self.car.regen_eff)
                     
-                    # Výpočet času na kolo z mapy
+                   
                     lap_time_k = float(sol.value(self.laptime_map(ca.vertcat(soc_k, e_k, regen_k))))
                     opt_lap_times.append(lap_time_k)
                     
-                    
-                    if lap_time_k < 20.0: 
+                    #happens when solver tries something outside of the laptime map, which evaluates the laptime to zero
+                    if lap_time_k < 1: 
                         print(f"   Laptime: {lap_time_k:.2f} s")
                         print(f"   Vstupy -> SoC_start: {soc_k:.4f}, E_lap: {e_k:.4f}, Regen: {regen_k:.2f}")
-                        return {"sccess":False}
+                        return {"success":False}
 
                 opt_total_time = sol.value(total_time)
 
@@ -3388,205 +2885,17 @@ class StrategyMaker:
                 print(f"Solver failed: {e}")
                 opti.debug.show_infeasibilities()
                 return {"success": False}
+--- KONEC SOUBORU: src\optimization\solvers\strategy_maker.py ---
 
-       
-@staticmethod
-def calculate_initial_guess(car,track, init_cond: InitConditions, ds=1.0):
-        #creates warm start for the solver based on simple forward-backward integration and curve speed limits
-       
-        total_length = track.length
-        N = int(np.round(total_length / ds))
-        s_sim = np.linspace(0, total_length, N + 1)
-        
-        ds_const = total_length / N 
-        
-        kappa_dm = track.get_curvature(s_sim)
-        kappa = np.array(kappa_dm).flatten()
-        
-        m = car.mass
-        g = 9.81
-        rho = 1.225
-        Cl = car.cl
-        Cd = car.cd
-        mu_x = car.mu_x - 0.1
-        mu_y = car.mu_y - 0.1
-        P_max = car.power_max-5000
-        F_max_abs = 8000
-        
-    
-        #curve limits vectorized
-        denom = m * np.abs(kappa) - mu_y * 0.5 * rho * Cl
-        
-      
-        v_max_car = 40.0 
-        v_curve = np.full(N+1, v_max_car)
-        
-        
-        mask = denom > 0
-        v_sq_limit = (mu_y * m * g) / denom[mask]
-        v_curve[mask] = np.sqrt(v_sq_limit)
-        
-    
-        v_curve = np.minimum(v_curve, v_max_car)
-
-        #forward integration (acceleration)
-        v_fwd = np.zeros(N+1)
-        v_fwd[0] = max(init_cond.v, 3.0) 
-        
-        for k in range(N):
-            v_curr = v_fwd[k]
-            
-            # Aero Drag
-            F_drag = 0.5 * rho * Cd * v_curr**2
-            
-            # Grip: F_z = m*g + AeroDown
-            F_z = m*g + 0.5 * rho * Cl * v_curr**2
-            F_grip = mu_x * F_z
-            
-            # Power: P = F*v -> F = P/v
-            F_power = P_max / max(v_curr, 2.0) * car.power_eff
-            
-            # Useable accel force
-            F_acc_max = min(F_grip, F_power, F_max_abs)
-            
-            # Net force & accel
-            F_net = F_acc_max - F_drag
-            acc = F_net / m
-            
-            # kinematics
-            v_next = np.sqrt(max(v_curr**2 + 2 * acc * ds_const, 1.0))
-            
-            # limit by curve
-            v_fwd[k+1] = min(v_next, v_curve[k+1])
-
-        # backward integration (braking)
-        v_bwd = np.zeros(N+1)
-        v_bwd[-1] = v_curve[-1] 
-        
-        for k in range(N, 0, -1):
-            v_curr = v_bwd[k] 
-            
-            # Aero
-            F_drag = 0.5 * rho * Cd * v_curr**2
-            F_z = m*g + 0.5 * rho * Cl * v_curr**2
-            
-            # Max Brake Force
-            F_grip = mu_x * F_z
-            F_brake_max = min(F_grip, F_max_abs) 
-                    
-            acc_back = (F_brake_max + F_drag) / m
-            
-            v_prev = np.sqrt(v_curr**2 + 2 * acc_back * ds_const)
-            
-            # Min (Backward, Forward, Curve)
-            v_bwd[k-1] = min(v_prev, v_curve[k-1], v_fwd[k-1])
-
-        # Final velocity profile
-        v_guess = v_bwd 
-        
-        #smoothing for IPOPT
-        window_size = 5
-        v_smooth = np.convolve(v_guess, np.ones(window_size)/window_size, mode='same')
-        v_smooth[0] = v_guess[0] 
-        v_smooth[-1] = v_guess[-1] 
-        
-        #calculate forces and energy for the guess
-        v_sq_diff = np.diff(v_smooth**2)
-        acc_req = v_sq_diff / (2 * ds_const)
-        
-        v_mid = 0.5 * (v_smooth[:-1] + v_smooth[1:])
-        
-        # Drag
-        F_drag_vec = 0.5 * rho * Cd * v_mid**2
-        
-        # F
-        F_net_req = m * acc_req
-        F_long_req = F_net_req + F_drag_vec
-        
-        # time
-        dt_vec = ds_const / np.maximum(v_mid, 1.0)
-        T_guess = np.concatenate(([0], np.cumsum(dt_vec))) + init_cond.T
-        
-        # Inputs splitting
-        F_acc_guess = np.maximum(F_long_req, 0)
-        F_brake_guess = np.minimum(F_long_req, 0)
-        
-        # Energy
-        P_mech = F_long_req * v_mid
-       
-        dE = P_mech * dt_vec / 3.6e6 
-        E_guess = np.concatenate(([init_cond.E], np.cumsum(dE) + init_cond.E))
-
-        return {
-            'v': np.array(v_smooth).flatten(),       
-            'T': np.array(T_guess).flatten(),        
-            'E': np.array(E_guess).flatten(),        
-            'F_acc': np.array(F_acc_guess).flatten(),   
-            'F_brake': np.array(F_brake_guess).flatten()
-        }
-
-
---- KONEC SOUBORU: src\optimization\solver.py ---
-
---- ZAČÁTEK SOUBORU: src\optimization\track_generation_thread.py ---
-from PyQt6.QtCore import QThread, pyqtSignal
-from src.core.trackGenerator import TrackGenerator
-
-
-class TrackGenerationWorker(QThread):
-    finished = pyqtSignal(bool, str) # success, message/path
-
-    def __init__(self, data, lap_info, is_closed, save_path):
-        super().__init__()
-        self.data = data
-        self.lap_info = lap_info
-        self.is_closed = is_closed
-        self.save_path = save_path
-
-    def run(self):
-        try:
-        
-            success,msg = TrackGenerator.process_and_save_lap(
-                self.data, 
-                self.lap_info, 
-                self.is_closed, 
-                self.save_path
-            )
-            
-            if success:
-                self.finished.emit(True, self.save_path)
-            else:
-                self.finished.emit(False, "Saving track failed: " + msg)
-                
-        except Exception as e:
-            self.finished.emit(False, str(e))
---- KONEC SOUBORU: src\optimization\track_generation_thread.py ---
-
---- ZAČÁTEK SOUBORU: src\optimization\work_thread.py ---
-from PyQt6.QtCore import QThread, pyqtSignal
-from src.optimization.tasks.base_task import SimulationTask
-
-class SimulationWorker(QThread):
-    """Thread that executes simulation tasks"""
-    finished = pyqtSignal(object) # returns SolverPayload
-    error = pyqtSignal(str)
-    progress = pyqtSignal(int, int)     
-
-    def __init__(self, task: SimulationTask):
-        super().__init__()
-        self.task = task
-    
-    def run(self):
-        try:
-            payload = self.task.execute(progress_callback=self.progress.emit)
-            self.finished.emit(payload)
-        except Exception as e:
-            self.error.emit(str(e))
---- KONEC SOUBORU: src\optimization\work_thread.py ---
-
---- ZAČÁTEK SOUBORU: src\optimization\__init__.py ---
-
---- KONEC SOUBORU: src\optimization\__init__.py ---
+--- ZAČÁTEK SOUBORU: src\optimization\solvers\__init__.py ---
+# src/optimization/solvers/__init__.py
+from .base_solver import BaseSolver, SolverResults, InitConditions
+from .mass_point import MassPointSolver
+from .single_track import SingleTrackSolver
+from .mpcc import MPCC_Solver
+from .strategy_maker import StrategyMaker
+from .init_guess import calculate_initial_guess
+--- KONEC SOUBORU: src\optimization\solvers\__init__.py ---
 
 --- ZAČÁTEK SOUBORU: src\optimization\tasks\base_task.py ---
 from dataclasses import dataclass, field
@@ -3614,7 +2923,7 @@ import os
 import time
 import numpy as np
 from scipy.interpolate import griddata
-from src.optimization.solver import InitConditions
+from src.optimization.solvers.base_solver import InitConditions
 from .base_task import SimulationTask, SolverPayload
 
 class LaptimeMapTask(SimulationTask):
@@ -3655,19 +2964,22 @@ class LaptimeMapTask(SimulationTask):
                     E_start = np.round(self.car.acp_capacity * (1-soc), 2)
                     init_cond = InitConditions(v=self.track.speed[0]-2, T=0.0, E=E_start)
                     
-                    res = self.solver.solveLap_rk4(init_cond=init_cond, ds=self.ds, init_guess=prev_res)
+                    res = self.solver.solve(init_cond=init_cond, ds=self.ds, init_guess=prev_res)
                     
                     if res.success:
                         laptime = res.lap_time
                         flat_lap_times.append(laptime)
-                        prev_res = res
+                        prev_res = {
+                            'v': res.v,
+                            'F_acc': res.f_acc 
+                        }
                         if laptime > last_slowest_lap:
                             last_slowest_lap = laptime
 
                         res.meta_soc = soc
                         res.meta_energy = e_target
                         res.meta_regen = regen
-                        res.meta_mass = self.car.mass
+                        res.meta_mass = self.car.weight
                         results_log.append(res)
                     else:
                         flat_lap_times.append(np.nan) 
@@ -3712,7 +3024,7 @@ class LaptimeMapTask(SimulationTask):
 
 --- ZAČÁTEK SOUBORU: src\optimization\tasks\single_lap.py ---
 import time
-from src.optimization.solver import InitConditions
+from src.optimization.solvers.base_solver import InitConditions
 from .base_task import SimulationTask, SolverPayload
 
 class SingleLapTask(SimulationTask):
@@ -3732,12 +3044,10 @@ class SingleLapTask(SimulationTask):
         else:
             init_cond = InitConditions(v=5, T=0.0, E=E)
 
-       # init_guess = calculate_initial_guess_single(self.car, self.track, init_cond, ds=self.ds)
+       # init_guess = calculate_initial_guess(self.car, self.track, init_cond, ds=self.ds)
         
-        if not self.solver.rk4:
-            res = self.solver.solveLap(init_cond, ds=self.ds, init_guess=None)
-        else:
-            res = self.solver.solveLap_rk4(init_cond, ds=self.ds, init_guess=None)
+    
+        res = self.solver.solve(init_cond, ds=self.ds, init_guess=None)
         
         end = time.time()
         print(f"Time elapsed: {end - start:.2f} s")
@@ -3848,6 +3158,8 @@ from .strategy import StrategyOptTask, DeploymentOptTask
 import numpy as np
 import pyqtgraph as pg
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QLabel, QTabWidget, QComboBox, QHBoxLayout)
+import json
+from PyQt6.QtWidgets import QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont
 import matplotlib.pyplot as plt
@@ -3958,12 +3270,36 @@ class ComparisonPlotWindow(QWidget):
         self.init_dynamics_tab()
         self.init_energy_tab()
         self.init_map_tab()
+        self.init_parameters_tab()
         
     def load_data(self):
         self.runs = []
         for item in self.selected_data:
             try:
                 data = np.load(item['path'], allow_pickle=True)
+                
+                # --- BEZPEČNÉ Načtení JSON parametrů auta ---
+                car_dict = {}
+                if 'car_config' in data:
+                    raw_config = data['car_config']
+                    
+                    # 1. Výpis syrových dat a typu
+                    print(f"--- DEBUG {item['legend']} ---")
+                    print(f"1. Raw type: {type(raw_config)}")
+                    print(f"2. Raw value: {repr(raw_config)}")
+                    
+                    try:
+                        # Vytažení čistého stringu
+                        if hasattr(raw_config, 'item'):
+                            raw_config = raw_config.item()
+                             
+                        car_dict = json.loads(str(raw_config))
+                       
+                    except Exception as e:
+                        car_dict = {"Data status": f"Parse error: {e}"}
+                else:
+                    car_dict = {"Data status": "No car parameters saved"}
+
                 run_dict = {
                     's': data['s'],
                     'v': data['v'],
@@ -3974,12 +3310,13 @@ class ComparisonPlotWindow(QWidget):
                     'f_acc': data['f_acc'],
                     'f_brake': data['f_brake'],
                     'time': float(data['lap_time']),
-                    'name': item['legend']
+                    'name': item['legend'],
+                    'car_dict': car_dict  # <-- Nyní tam bude buď JSON, nebo zpráva o chybějících datech
                 }
                 self.runs.append(run_dict)
                 data.close()
             except Exception as e:
-                print(f"Error: {e}")
+                print(f"Error loading {item['path']}: {e}")
 
         if not self.runs: return
 
@@ -4035,20 +3372,25 @@ class ComparisonPlotWindow(QWidget):
             width = 2.5 if run is self.ref_run else 2.0
             
             # A) Speed
-            plot_v.plot(run['s'], run['v'] * 3.6, pen=pg.mkPen(color_val, width=width), name=f"{run['name']} ({run['time']:.3f}s)")
+            plot_v.plot(run['s'], run['v'] * 3.6, pen=pg.mkPen(color_val, width=width), name=f"({run['time']:.3f}s)")
             
-            # B) Delta Time
-            min_len = min(len(run['t']), len(self.ref_run['t']))
-            t_run = run['t'][:min_len]
-            t_ref = self.ref_run['t'][:min_len]
-            s_axis = run['s'][:min_len]
+           # B) Delta Time (OPRAVENO S INTERPOLACÍ)
+            # Vezmeme vzdálenostní a časovou osu z REFERENČNÍHO kola
+            s_ref = self.ref_run['s']
+            t_ref = self.ref_run['t']
             
-            delta = t_run - t_ref
-            dt_curve = plot_dt.plot(s_axis, delta, pen=pg.mkPen(color_val, width=width), name=run['name'])
+            # Interpolujeme čas porovnávaného kola na body vzdálenosti referenčního kola
+            t_run_interp = np.interp(s_ref, run['s'], run['t'])
+            
+            # Nyní můžeme bezpečně odečíst, protože obě pole mají stejnou délku a odpovídají stejným pozicím
+            delta = t_run_interp - t_ref
+            
+            dt_curve = plot_dt.plot(s_ref, delta, pen=pg.mkPen(color_val, width=width), name=f"({run['time']:.3f}s)")
             
             # VÝPLŇ DELTY (s jemnou průhledností)
             if run is not self.ref_run:
-                dummy_zero = pg.PlotCurveItem(s_axis, np.zeros_like(s_axis), pen=None)
+                # Použijeme s_ref místo s_axis
+                dummy_zero = pg.PlotCurveItem(s_ref, np.zeros_like(s_ref), pen=None)
                 plot_dt.addItem(dummy_zero)
                 
                 fill_color = pg.mkColor(color_hex)
@@ -4074,7 +3416,7 @@ class ComparisonPlotWindow(QWidget):
         legend.setLabelTextColor('#0f172a')
         
         plot_e = pg.PlotWidget()
-        self._style_plot(plot_e, "Energy Consumption", "Energy", "kWh")
+        self._style_plot(plot_e, "Energy consumption", "Energy", "kWh")
         plot_e.setXLink(plot_p)
 
         for i, run in enumerate(self.runs):
@@ -4089,10 +3431,10 @@ class ComparisonPlotWindow(QWidget):
             pwr = (f_tot * v) / 1000.0
             s_axis = run['s'][:min_len]
             
-            plot_p.plot(s_axis, pwr, pen=pg.mkPen(color_val, width=width), name=run['name'])
+            plot_p.plot(s_axis, pwr, pen=pg.mkPen(color_val, width=width), name=f"({run['time']:.3f}s)")
             
             # Energy - výplň pod křivkou pro lepší čitelnost
-            e_curve = plot_e.plot(run['s'], run['E'], pen=pg.mkPen(color_val, width=width), name=run['name'])
+            e_curve = plot_e.plot(run['s'], run['E']-run['E'][0], pen=pg.mkPen(color_val, width=width), name=f"({run['time']:.3f}s)")
             
             if run is self.ref_run:
                 dummy_zero = pg.PlotCurveItem(run['s'], np.zeros_like(run['s']), pen=None)
@@ -4186,18 +3528,102 @@ class ComparisonPlotWindow(QWidget):
         ax.set_title(f"Speed Delta [km/h]", pad=15, fontweight='bold', color='#0f172a')
         ax.set_aspect('equal')
         
-        # OPRAVA ZDE: Vypnutí os, mřížky a okrajů rámečku pro čistý vzhled
+        
         ax.axis('off')
         
-        if hasattr(self, 'cbar'):
-            self.cbar.remove()
-        
-        # Vytvoření moderního colorbaru
-        self.cbar = self.map_canvas.fig.colorbar(sc, ax=ax, fraction=0.03, pad=0.04)
+        if not hasattr(self, 'cax'):
+            # Poprvé zmenšíme hlavní graf a vytvoříme fixní osu vpravo
+            self.map_canvas.fig.subplots_adjust(right=0.85)
+            self.cax = self.map_canvas.fig.add_axes([0.88, 0.15, 0.02, 0.7])
+        else:
+            # Při dalším překreslení už jen vyčistíme osu legendy, graf zůstane nedotčený
+            self.cax.clear()
+            
+        # Vykreslení legendy do naší fixní osy (cax místo ax)
+        self.cbar = self.map_canvas.fig.colorbar(sc, cax=self.cax)
         self.cbar.outline.set_visible(False)
         self.cbar.ax.tick_params(colors='#475569')
         
         self.map_canvas.draw()
+
+    def init_parameters_tab(self):
+        widget = QWidget()
+        # Horizontální layout vyskládá tabulky vedle sebe
+        layout = QHBoxLayout(widget)
+        layout.setContentsMargins(15, 15, 15, 15)
+        layout.setSpacing(20)
+
+        for run in self.runs:
+            run_container = QWidget()
+            run_layout = QVBoxLayout(run_container)
+            run_layout.setContentsMargins(0, 0, 0, 0)
+            
+            # --- ZÍSKÁNÍ JMÉNA AUTA ---
+            car_dict = run.get('car_dict', {})
+            # Vytvoříme kopii, abychom z ní mohli 'name' bezpečně vyndat
+            display_dict = dict(car_dict) if isinstance(car_dict, dict) else {}
+            car_name = display_dict.pop('name', 'Unknown Car')
+            
+            # Hlavička tabulky s názvem auta a simulace
+            lbl = QLabel(f"Vehicle: <b>{car_name}</b><br><span style='font-size: 10pt; color: #64748b;'>Log: {run['name']}</span>")
+            lbl.setStyleSheet("font-size: 12pt; color: #0f172a; margin-bottom: 5px;")
+            run_layout.addWidget(lbl)
+            
+            # Samotná tabulka
+            table = QTableWidget()
+            table.setColumnCount(2)
+            table.setHorizontalHeaderLabels(["Parameter", "Value"])
+            
+            # Stylování tabulky do moderního designu
+            table.horizontalHeader().setStretchLastSection(True)
+            table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+            table.verticalHeader().setVisible(False)
+            table.setAlternatingRowColors(True)
+            table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+            table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+            table.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+            
+            table.setStyleSheet("""
+                QTableWidget {
+                    background-color: #ffffff;
+                    alternate-background-color: #f8fafc;
+                    border: 1px solid #e2e8f0;
+                    border-radius: 6px;
+                    font-size: 10pt;
+                    color: #334155;
+                }
+                QHeaderView::section {
+                    background-color: #f1f5f9;
+                    padding: 8px;
+                    border: none;
+                    border-bottom: 1px solid #cbd5e1;
+                    font-weight: bold;
+                    color: #475569;
+                }
+                QTableWidget::item {
+                    padding: 5px 10px;
+                    border-bottom: 1px solid #f1f5f9;
+                }
+            """)
+
+            table.setRowCount(len(display_dict))
+            
+            # Vypsání dat (už bez klíče 'name')
+            for row, (key, value) in enumerate(display_dict.items()):
+                item_key = QTableWidgetItem(str(key).replace('_', ' ').capitalize())
+                item_val = QTableWidgetItem(str(value))
+                
+                # Zvýraznění textu parametrů
+                item_key.setForeground(pg.mkColor('#64748b'))
+                item_val.setForeground(pg.mkColor('#0f172a'))
+                
+                table.setItem(row, 0, item_key)
+                table.setItem(row, 1, item_val)
+                
+            run_layout.addWidget(table)
+            layout.addWidget(run_container)
+            
+        self.tabs.addTab(widget, "Car Configs")
 --- KONEC SOUBORU: src\ui\compare_results.py ---
 
 --- ZAČÁTEK SOUBORU: src\ui\endurance_results.py ---
@@ -4615,7 +4041,7 @@ class EnduranceResultsWindow(QWidget):
         if filepath:
             try:
                 # currently saving only the selected lap
-                save_results_to_npz(filepath, self.current_res, self.track.name, self.ds)
+                save_results_to_npz(filepath, self.current_res, self.track.name, self.ds,self.car)
                 self.btn_save.setText("Saved Current Lap!")
             except Exception as e:
                 print(f"Error: {e}")
@@ -4734,18 +4160,24 @@ class MapTab(QWidget):
         )
         
         self.ax3d.set_zlim(self.z_min, self.z_max)
-        self.ax3d.set_xlabel(x_label, color='#475569')
-        self.ax3d.set_ylabel(y_label, color='#475569')
-        self.ax3d.set_zlabel('Lap time [s]', color='#475569')
-        self.ax3d.set_title(title, color='#0f172a', fontweight='bold')
         
-        # Stylování os
+        # Sjednocení stylu fontů - odstranění bold a úprava barev
+        self.ax3d.set_xlabel('Energy target [kWh]', color='#475569', fontweight='normal')
+        self.ax3d.set_ylabel(y_label, color='#475569', fontweight='normal')
+        self.ax3d.set_zlabel('Lap time [s]', color='#475569', fontweight='normal')
+        
+        # Title bez bold, stejná barva jako u výsledků
+        self.ax3d.set_title(title, color='#475569', fontweight='normal', pad=15)
+        
+        # Stylování čísel na osách (ticks)
         self.ax3d.xaxis.set_tick_params(colors='#64748b')
         self.ax3d.yaxis.set_tick_params(colors='#64748b')
         self.ax3d.zaxis.set_tick_params(colors='#64748b')
         
         self.ax3d.view_init(elev=self.view_elev, azim=self.view_azim)
-        self.fig.subplots_adjust(left=0.05, right=0.85, bottom=0.05, top=0.95)
+        
+        # Optimalizace okrajů, aby graf nebyl zbytečně malý
+      # self.fig.subplots_adjust(left=0.0, right=1.0, bottom=0.0, top=0.95)
         self.canvas.draw_idle()
 
 
@@ -4756,6 +4188,70 @@ class LaptimeAppMainWindow(QWidget):
     def __init__(self, filepath, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Endurance strategy")
+
+        self.setStyleSheet("""
+            /* Nastavíme pozadí jen pro hlavní okno a čisté kontejnery */
+            LaptimeAppMainWindow, .QWidget {
+                font-family: 'Segoe UI', system-ui, sans-serif;
+                font-size: 10pt;
+                color: #334155;
+                background-color: #f8f9fa;
+            }
+            
+            /* --- TLAČÍTKA --- */
+            QPushButton {
+                font-family: 'Segoe UI', system-ui, sans-serif;
+                font-size: 10pt;
+                font-weight: bold;
+                border-radius: 6px;
+                padding: 8px 15px;
+                color: white;
+                border: none;
+            }
+            QPushButton#BtnCompare { background-color: #3b82f6; } /* Modrá */
+            QPushButton#BtnCompare:hover { background-color: #2563eb; }
+            
+            QPushButton#BtnRunSingle { background-color: #10b981; } /* Zelená */
+            QPushButton#BtnRunSingle:hover { background-color: #059669; }
+
+            /* --- KONTEJNERY A ZÁLOŽKY --- */
+            QGroupBox {
+                background-color: #ffffff;
+                border: 1px solid #e2e8f0;
+                border-radius: 8px;
+                margin-top: 15px;
+                padding-top: 5px;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                subcontrol-position: top left;
+                padding: 0px 5px;
+                color: #475569;
+                font-weight: bold;
+            }
+            QTabWidget::pane {
+                border: 1px solid #e2e8f0;
+                border-radius: 8px;
+                background: #ffffff;
+            }
+            QTabBar::tab {
+                background: #e2e8f0;
+                color: #64748b;
+                padding: 10px 20px;
+                border-top-left-radius: 6px;
+                border-top-right-radius: 6px;
+                margin-right: 4px;
+                font-weight: bold;
+            }
+            QTabBar::tab:selected {
+                background: #ffffff;
+                color: #0f172a;
+                border-bottom: 2px solid #3b82f6;
+            }
+            QTabBar::tab:hover:!selected {
+                background: #cbd5e1;
+            }
+        """)
     
         self.loading_overlay = LoadingOverlay(self)
         self.map_data = self.load_data(filepath)
@@ -4840,7 +4336,7 @@ class LaptimeAppMainWindow(QWidget):
             side_by_side_layout.addWidget(self.tab_soc)
             side_by_side_layout.addWidget(self.tab_regen)
             
-            self.tabs.addTab(side_by_side_widget, "Laptime maps (Data)")
+            self.tabs.addTab(side_by_side_widget, "Laptime maps ")
         else:
             self.tabs.addTab(QLabel("Failed to load map data."), "Error")
             
@@ -4943,6 +4439,7 @@ class StrategyResultTab(QWidget):
         
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(15, 15, 15, 15)
+        main_layout.setSpacing(10) # Rozestup mezi summary a grafem
         
         if not self.res_opt.get("success", False):
             error_lbl = QLabel("Optimization failed for these specific inputs. Try different values.")
@@ -4960,6 +4457,7 @@ class StrategyResultTab(QWidget):
         summary_layout = QHBoxLayout(summary_container)
         summary_layout.setContentsMargins(20, 20, 20, 20)
         
+        # ... (výpočet total_time, points atd. zůstává stejný jako ve tvém kódu) ...
         total_time = self.res_opt['total_time']
         points = self.res_opt['points']
         total_energy = sum(self.res_opt['e_targets'])
@@ -4970,7 +4468,6 @@ class StrategyResultTab(QWidget):
             time_saved = self.res_full['total_time'] - total_time
             points_diff = points - self.res_full['points']
             energy_diff = total_energy - sum(self.res_full['e_targets'])
-            
             c_time = "#10b981" if time_saved >= 0 else "#ef4444"
             c_pts = "#10b981" if points_diff >= 0 else "#ef4444"
             c_eng = "#10b981" if energy_diff <= 0 else "#ef4444"
@@ -5006,12 +4503,12 @@ class StrategyResultTab(QWidget):
         self.fig = Figure(figsize=(10, 8), dpi=100)
         self.fig.patch.set_facecolor('#ffffff') 
         self.canvas = FigureCanvasQTAgg(self.fig)
-        self.toolbar = NavigationToolbar2QT(self.canvas, self)
+        # Toolbar jsme odstranili
         
         graph_container = QWidget()
-        graph_container.setObjectName("CanvasContainer") # Rámeček a pozadí z globálního stylu
+        graph_container.setObjectName("CanvasContainer")
         graph_layout = QVBoxLayout(graph_container)
-        graph_layout.addWidget(self.toolbar)
+        graph_layout.setContentsMargins(5, 5, 5, 5)
         graph_layout.addWidget(self.canvas)
         
         main_layout.addWidget(graph_container)
@@ -5024,15 +4521,13 @@ class StrategyResultTab(QWidget):
         opt_e_targets = np.array(self.res_opt['e_targets'])
         
         has_full_soc = self.res_full.get("success", False)
-        if has_full_soc:
-            full_lap_times = np.array(self.res_full['lap_times'])
-            full_e_targets = np.array(self.res_full['e_targets'])
-
+        
         # --- LAP TIMES ---
         ax1 = self.fig.add_subplot(2, 1, 1)
         ax1.plot(laps, opt_lap_times, marker='o', color='#3b82f6', linewidth=2.5, markersize=7, label='Optimal SoC Start')
         
         if has_full_soc:
+            full_lap_times = np.array(self.res_full['lap_times'])
             ax1.plot(laps, full_lap_times, marker='x', color='#94a3b8', linewidth=2, linestyle='--', label='100% SoC Start')
         
         ax1.set_ylabel('Lap time [s]', color='#475569')
@@ -5040,25 +4535,29 @@ class StrategyResultTab(QWidget):
         ax1.tick_params(axis='x', labelcolor='#475569')
         ax1.set_xticks(laps)
         ax1.grid(True, linestyle='--', alpha=0.3)
-        ax1.set_title('Lap Times Evolution', color='#0f172a', fontweight='bold', pad=10)
-        ax1.legend(frameon=True, edgecolor='#e2e8f0')
+        # Bold odstraněn, barva zjemněna
+        ax1.set_title('Lap Times Evolution', color='#475569', fontweight='normal', pad=15)
+        ax1.legend(frameon=True, edgecolor='#e2e8f0', loc='best')
 
         # --- ENERGY ---
         ax2 = self.fig.add_subplot(2, 1, 2, sharex=ax1)
         ax2.plot(laps, opt_e_targets, marker='s', color='#10b981', linewidth=2.5, markersize=6, label='Optimal SoC Start')
         
         if has_full_soc:
+            full_e_targets = np.array(self.res_full['e_targets'])
             ax2.plot(laps, full_e_targets, marker='^', color='#cbd5e1', linewidth=2, linestyle='--', label='100% SoC Start')
         
-        ax2.set_xlabel('Lap number', color='#475569', fontweight='bold')
+        ax2.set_xlabel('Lap number', color='#475569', fontweight='normal')
         ax2.set_ylabel('Energy target [kWh]', color='#475569')
         ax2.tick_params(axis='y', labelcolor='#475569')
         ax2.tick_params(axis='x', labelcolor='#475569')
         ax2.grid(True, linestyle='--', alpha=0.3)
-        ax2.set_title('Energy Deployment per Lap', color='#0f172a', fontweight='bold', pad=10)
-        ax2.legend(frameon=True, edgecolor='#e2e8f0')
+        # Bold odstraněn, barva zjemněna
+        ax2.set_title('Energy Deployment per Lap', color='#475569', fontweight='normal', pad=15)
+        ax2.legend(frameon=True, edgecolor='#e2e8f0', loc='best')
 
-        self.fig.tight_layout()
+        # Klíč k úspěchu: tight_layout s h_pad definuje vertikální mezery mezi grafy
+        self.fig.tight_layout(pad=3.0, h_pad=4.0) 
         self.canvas.draw()
 
 
@@ -5081,38 +4580,14 @@ class OptimalEnergyMapTab(QWidget):
         self.fig = Figure(figsize=(8, 6), dpi=100)
         self.fig.patch.set_facecolor('#ffffff')
         self.canvas = FigureCanvasQTAgg(self.fig)
-        self.toolbar = NavigationToolbar2QT(self.canvas, self)
+        self.canvas.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+       #elf.toolbar = NavigationToolbar2QT(self.canvas, self)
         
-        # --- Controls ---
-        control_layout = QHBoxLayout()
-        sliders_vbox = QVBoxLayout()
-        
-        # Regen Slider
-        regen_layout = QHBoxLayout()
-        self.lbl_regen = QLabel("Regen: 0 %")
-        self.lbl_regen.setFixedWidth(100)
-        self.lbl_regen.setStyleSheet("font-weight: bold; color: #475569;")
-        self.slider_regen = QSlider(Qt.Orientation.Horizontal)
-        self.slider_regen.setMinimum(int(min(self.grid_regen) * 100))
-        self.slider_regen.setMaximum(100)
-        self.slider_regen.setValue(int(max(self.grid_regen) * 50))
-        regen_layout.addWidget(self.lbl_regen)
-        regen_layout.addWidget(self.slider_regen)
-        
-        # Delta Slider
-        delta_layout = QHBoxLayout()
-        self.lbl_delta = QLabel("Delta: 0 %")
-        self.lbl_delta.setFixedWidth(100)
-        self.lbl_delta.setStyleSheet("font-weight: bold; color: #475569;")
-        self.slider_delta = QSlider(Qt.Orientation.Horizontal)
-        self.slider_delta.setMinimum(int(min(self.grid_delta) * 100))
-        self.slider_delta.setMaximum(int(max(self.grid_delta) * 100))
-        self.slider_delta.setValue(0)
-        delta_layout.addWidget(self.lbl_delta)
-        delta_layout.addWidget(self.slider_delta)
-        
-        sliders_vbox.addLayout(regen_layout)
-        sliders_vbox.addLayout(delta_layout)
+        # --- Controls (Postranní panel vlevo) ---
+        control_panel = QWidget()
+        control_panel.setFixedWidth(260) # Pevná šířka, zbytek se dá grafu
+        control_layout = QVBoxLayout(control_panel)
+        control_layout.setContentsMargins(0, 10, 15, 10)
         
         # Výpis (Moderní karta)
         self.lbl_opt_energy = QLabel("Optimal energy:\n-- kWh\n\nOptimal SoC start:\n-- %")
@@ -5125,19 +4600,60 @@ class OptimalEnergyMapTab(QWidget):
             border-radius: 8px;
         """)
         self.lbl_opt_energy.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.lbl_opt_energy.setFixedWidth(250)
         
-        control_layout.addLayout(sliders_vbox)
-        control_layout.addSpacing(20)
+        # Vertikální slidery vedle sebe
+        sliders_layout = QHBoxLayout()
+        
+        # Regen Slider
+        regen_vbox = QVBoxLayout()
+        self.lbl_regen = QLabel("Regen:\n0 %")
+        self.lbl_regen.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.lbl_regen.setStyleSheet("font-weight: bold; color: #475569;")
+        
+        self.slider_regen = QSlider(Qt.Orientation.Vertical)
+        self.slider_regen.setMinimum(int(min(self.grid_regen) * 100))
+        self.slider_regen.setMaximum(100)
+        self.slider_regen.setValue(int(max(self.grid_regen) * 50))
+        self.slider_regen.setTickPosition(QSlider.TickPosition.TicksLeft)
+        
+        regen_vbox.addWidget(self.lbl_regen)
+        regen_vbox.addWidget(self.slider_regen, alignment=Qt.AlignmentFlag.AlignHCenter)
+        
+        # Delta Slider
+        delta_vbox = QVBoxLayout()
+        self.lbl_delta = QLabel("Delta:\n0 %")
+        self.lbl_delta.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.lbl_delta.setStyleSheet("font-weight: bold; color: #475569;")
+        
+        self.slider_delta = QSlider(Qt.Orientation.Vertical)
+        self.slider_delta.setMinimum(int(min(self.grid_delta) * 100))
+        self.slider_delta.setMaximum(int(max(self.grid_delta) * 100))
+        self.slider_delta.setValue(0)
+        self.slider_delta.setTickPosition(QSlider.TickPosition.TicksRight)
+        
+        delta_vbox.addWidget(self.lbl_delta)
+        delta_vbox.addWidget(self.slider_delta, alignment=Qt.AlignmentFlag.AlignHCenter)
+        
+        sliders_layout.addLayout(regen_vbox)
+        sliders_layout.addLayout(delta_vbox)
+        
         control_layout.addWidget(self.lbl_opt_energy)
+        control_layout.addSpacing(20)
+        control_layout.addLayout(sliders_layout)
         
+        # --- Hlavní sestavení kontejneru s grafem ---
         graph_container = QWidget()
-        graph_container.setObjectName("CanvasContainer") # Napojeno na global CSS
-        graph_layout = QVBoxLayout(graph_container)
-        graph_layout.addWidget(self.toolbar)
-        graph_layout.addLayout(control_layout)
-        graph_layout.addWidget(self.canvas, stretch=1)
+        graph_container.setObjectName("CanvasContainer")
+        graph_main_layout = QVBoxLayout(graph_container)
         
+        #raph_main_layout.addWidget(self.toolbar)
+        
+        # Rozdělení: Levý panel s ovládáním, pravá část obří graf
+        content_layout = QHBoxLayout()
+        content_layout.addWidget(control_panel)
+        content_layout.addWidget(self.canvas, stretch=1) 
+        
+        graph_main_layout.addLayout(content_layout)
         main_layout.addWidget(graph_container)
         
         self.ax3d = None
@@ -5173,21 +4689,24 @@ class OptimalEnergyMapTab(QWidget):
         self.ax3d.set_xlabel('Recuperation [%]', color='#475569')
         self.ax3d.set_ylabel('Time delta [%]', color='#475569')
         self.ax3d.set_zlabel('Energy target [kWh]', color='#475569')
-        self.ax3d.set_title('Optimal Energy Target', color='#0f172a', fontweight='bold', pad=20)
+
         
         self.ax3d.xaxis.set_tick_params(colors='#64748b')
         self.ax3d.yaxis.set_tick_params(colors='#64748b')
         self.ax3d.zaxis.set_tick_params(colors='#64748b')
 
         self.ax3d.view_init(elev=self.view_elev, azim=self.view_azim)
-        self.fig.subplots_adjust(left=0.05, right=0.85, bottom=0.05, top=0.95)
+        
+        # Agresivnější zmenšení okrajů Matplotlibu pro větší využití plochy
+        self.fig.subplots_adjust(left=0.0, right=0.95, bottom=0.05, top=0.95)
 
     def update_point(self):
         regen_val = self.slider_regen.value() / 100.0
         delta_val = self.slider_delta.value() / 100.0
         
-        self.lbl_regen.setText(f"Regen: {regen_val*100:.0f} %")
-        self.lbl_delta.setText(f"Delta: {delta_val*100:.0f} %")
+        # Přidány nové řádky (\n) aby text nad vertikálním sliderem vypadal dobře
+        self.lbl_regen.setText(f"Regen:\n{regen_val*100:.0f} %")
+        self.lbl_delta.setText(f"Delta:\n{delta_val*100:.0f} %")
 
         opt_e = float(self.e_interpolant([regen_val, delta_val])[0])
         opt_soc = float(self.soc_interpolant([regen_val, delta_val])[0])
@@ -5246,7 +4765,7 @@ class LoadingOverlay(QWidget):
         self.lbl_gif = QLabel()
         self.lbl_gif.setAlignment(Qt.AlignmentFlag.AlignCenter)
      
-        gif_path = "data/vejsi_loading.gif" 
+        gif_path = "data/loading3.gif" 
         self.movie = QMovie(gif_path)
      
         self.movie.setScaledSize(QSize(300, 300)) 
@@ -5359,6 +4878,7 @@ from src.core.trackGenerator import TrackGenerator
 from src.optimization.track_generation_thread import TrackGenerationWorker
 from src.handlers.requests import SingleLapRequest, EnduranceRequest, LapMapTestRequest
 from src.ui.loader import LoadingOverlay
+from src.ui.track_generator_dialog import TrackGeneratorDialog
 from src.utils.config_manager import ConfigManager
 
 from PyQt6.QtGui import QGuiApplication, QTransform, QColor, QFont
@@ -5405,7 +4925,7 @@ class MainWindow(QMainWindow):
             "model_type": "mass_point",
             "energy_limit": None,
             "drs_allowed": True,
-            "soc_start": 1.0 # moved to simulation settings
+            "soc_start": 0.67 # moved to simulation settings
         }
         
         # current active parameters
@@ -5629,7 +5149,7 @@ class MainWindow(QMainWindow):
         self.btn_new_vehicle.setFixedWidth(32)
         self.btn_new_vehicle.setFixedHeight(32)
         self.btn_new_vehicle.clicked.connect(self.on_new_vehicle_clicked)
-        self.btn_new_vehicle.setToolTip("create a new vehicle profile")
+        self.btn_new_vehicle.setToolTip("Create a new vehicle profile")
         
         veh_layout.addWidget(self.combo_vehicle)
         veh_layout.addWidget(self.btn_new_vehicle)
@@ -5653,9 +5173,10 @@ class MainWindow(QMainWindow):
         
         # 5. SoC start
         self.input_soc = QDoubleSpinBox()
-        self.input_soc.setRange(0.1, 1.0)
-        self.input_soc.setSingleStep(0.05)
-        self.input_soc.setDecimals(2)
+        self.input_soc.setRange(10, 100)
+        self.input_soc.setSingleStep(1)
+        self.input_soc.setDecimals(2)     # Skryje desetinná místa (ukáže 67 místo 67.00)
+        self.input_soc.setSuffix(" %")
         layout.addRow("SoC start:", self.input_soc)
 
         # 6. drs
@@ -5678,7 +5199,8 @@ class MainWindow(QMainWindow):
         self.input_limit_e.setEnabled(self.check_energy_limit.isChecked())
         
         # update soc_start
-        self.input_soc.setValue(self.car_params.get("soc_start", 1.0))
+        soc_val = self.car_params.get("soc_start", 0.67)
+        self.input_soc.setValue(soc_val * 100.0)
         
         self.check_drs.setChecked(self.car_params.get("drs_allowed", True))
 
@@ -5717,7 +5239,8 @@ class MainWindow(QMainWindow):
         self.car_params["drs_allowed"] = self.check_drs.isChecked()
         self.car_params["energy_limit"] = self.input_limit_e.value() if self.check_energy_limit.isChecked() else None
         self.car_params["ds"] = self.input_ds.value()
-        self.car_params["soc_start"] = self.input_soc.value() # grab soc from UI
+        self.car_params["soc_start"] = self.input_soc.value()/100# grab soc from UI
+        self.car_params["name"] = self.current_vehicle_name
 
     def _get_car_params(self):
         self._sync_params_from_ui()
@@ -5782,27 +5305,51 @@ class MainWindow(QMainWindow):
 
     def plot_track_map(self, track: Track):
         self.mpl_canvas.fig.clf()
+        # Vytvoření subplots s poměrem pro legendu
         ax = self.mpl_canvas.fig.add_subplot(111)
-        ax.set_facecolor('#ffffff') # Bílé pozadí grafu
+        ax.set_facecolor('#ffffff')
+        
         x, y = track.x, track.y
+        # Výpočet sklonu (pokud alpha existuje, jinak nuly)
         alpha_deg = np.degrees(track.alpha) if hasattr(track, 'alpha') and track.alpha is not None else np.zeros_like(x)
 
+        # Příprava segmentů pro barevnou čáru
         points = np.array([x, y]).T.reshape(-1, 1, 2)
         segments = np.concatenate([points[:-1], points[1:]], axis=1)
 
+        # Nastavení barevné mapy a normalizace
         norm = Normalize(vmin=np.min(alpha_deg), vmax=np.max(alpha_deg))
         lc = LineCollection(segments, cmap='viridis', norm=norm)
         lc.set_array(alpha_deg[:-1])
-        lc.set_linewidth(3)
-        ax.add_collection(lc)
+        lc.set_linewidth(3.5) # Mírně tlustší čára pro lepší viditelnost barev
+        
+        line = ax.add_collection(lc)
 
+        # Nastavení limitů a poměru stran
         ax.set_xlim(x.min() - 20, x.max() + 20)
         ax.set_ylim(y.min() - 20, y.max() + 20)
         ax.set_aspect('equal')
-        ax.plot(x[0], y[0], 'o', color='#10b981', markersize=8, markeredgecolor='black') # Moderní zelená tečka
+        
+        # Startovní bod
+        ax.plot(x[0], y[0], 'o', color='#10b981', markersize=8, markeredgecolor='black', zorder=5)
+        
+        # --- PŘIDÁNÍ BAREVNÉ LEGENDY (Colorbar) ---
+        # Zmenšíme hlavní graf, aby se vpravo vešla legenda
+        self.mpl_canvas.fig.subplots_adjust(right=0.85)
+        
+        # Vytvoření osy pro colorbar (umístění vpravo)
+        cax = self.mpl_canvas.fig.add_axes([0.88, 0.15, 0.02, 0.7])
+        cb = self.mpl_canvas.fig.colorbar(line, cax=cax)
+        
+        # Stylování legendy
+        cb.outline.set_visible(False) # Skrytí rámečku legendy
+        cb.set_label('Elevation [deg]', color='#64748b', size=10, labelpad=10)
+        cb.ax.yaxis.set_tick_params(colors='#64748b', labelsize=9)
+        
+        # Vypnutí os mapy
         ax.axis('off')
         
-        self.mpl_canvas.fig.tight_layout()
+        # Překreslení
         self.mpl_canvas.draw()
   
     # ==========================================
@@ -5836,42 +5383,68 @@ class MainWindow(QMainWindow):
     # track generation wizard
     # ==========================================
     def on_create_track_clicked(self):
-        fname, _ = QFileDialog.getOpenFileName(self, "select telemetry log", "", "MAT Files (*.mat)")
-        if not fname: return
+        # 1. Zobrazení nového dialogu pro konfiguraci
+        dialog = TrackGeneratorDialog(self)
+        if dialog.exec() != QDialog.accepted:
+            return  # Uživatel dialog křížkem zavřel
 
+        fname = dialog.selected_file
+        is_closed_mode = dialog.radio_closed.isChecked()
+        r_penalty = dialog.spin_r.value()
+
+        if not fname:
+            return
+
+        # 2. Načtení a parsování dat
         self.loading_overlay.show_loading("parsing log data...", indefinite=True)
         QApplication.processEvents()
 
         try:
-            data = TrackGenerator.filter_data(fname)
+            from src.handlers.telemetry_parser import filter_data
+            data = filter_data(fname)
         except Exception as e:
             self.loading_overlay.hide_loading()
             QMessageBox.critical(self, "error", f"failed to parse file:\n{e}")
             return
             
         self.loading_overlay.hide_loading()
-        if data is None: return
+        if data is None: 
+            return
 
-        msg = QMessageBox(self)
-        msg.setWindowTitle("select track mode")
-        msg.setText("How do you want to define the track?")
-        btn_closed = msg.addButton("closed track (endurance)", QMessageBox.ButtonRole.AcceptRole)
-        btn_open = msg.addButton("open section (autocross)", QMessageBox.ButtonRole.RejectRole)
-        msg.addButton(QMessageBox.StandardButton.Cancel)
-        msg.exec()
+        # 3. Výběr kol (Matplotlib)
+        from src.ui.track_tools import run_lap_selector, manual_lap_selector
         
-        if msg.clickedButton() == msg.button(QMessageBox.StandardButton.Cancel): return
-        is_closed_mode = (msg.clickedButton() == btn_closed)
-
-        lap_info = None
+        # Matplotlib musí běžet v hlavním vlákně (ne ve workeru!)
         if is_closed_mode:
-            lap_info = TrackGenerator.run_lap_selector(data)
+            lap_infos = run_lap_selector(data)
         else:
-            lap_info = TrackGenerator.manual_lap_selector(data)
+            lap_infos = manual_lap_selector(data)
 
-        if not lap_info: return
+        if not lap_infos:
+            return # Uživatel nevybral úsek
 
-        default_name = f"track_{lap_info['time']:.2f}s.npz"
+        # 4. Spuštění CasADi výpočtu na pozadí
+        self.loading_overlay.show_loading("smoothing track (CasADi)...", indefinite=True)
+        self.track_worker = TrackGenerationWorker(data, lap_infos, is_closed_mode, r_penalty)
+        self.track_worker.finished.connect(self.on_track_smoothed)
+        self.track_worker.start()
+
+    def on_track_smoothed(self, success, result_data):
+        self.loading_overlay.hide_loading()
+        
+        if not success:
+            QMessageBox.critical(self, "error", f"track generation failed:\n{result_data}")
+            return
+            
+        # 5. Definice DRS Zón na zpracované trati (Matplotlib)
+        from src.ui.track_tools import MapDRSEditor
+        drs_editor = MapDRSEditor(result_data['x'], result_data['y'], result_data['s'])
+        result_data['drs'] = drs_editor.get_mask()
+
+        # 6. Uložení výsledku
+        avg_time = result_data.get('lap_time', 0.0)
+        default_name = f"track_{avg_time:.2f}s.npz"
+        
         save_path, _ = QFileDialog.getSaveFileName(
             self, "save baked track", 
             os.path.join("data/tracks", default_name), 
@@ -5879,10 +5452,19 @@ class MainWindow(QMainWindow):
         )
 
         if save_path:
-            self.loading_overlay.show_loading("smoothing track...", indefinite=True)
-            self.track_worker = TrackGenerationWorker(data, lap_info, is_closed_mode, save_path)
-            self.track_worker.finished.connect(self.on_track_generation_finished)
-            self.track_worker.start()
+            import numpy as np
+            import os
+            
+            # Uložíme zkonstruovaný slovník pomocí numpy
+            np.savez(save_path, **result_data)
+            QMessageBox.information(self, "success", f"track saved successfully!\n{save_path}")
+            
+            # Update UI dropdownu
+            self.load_track_list()
+            track_name = os.path.splitext(os.path.basename(save_path))[0]
+            idx = self.combo_track.findText(track_name)
+            if idx >= 0:
+                self.combo_track.setCurrentIndex(idx)
 
     def on_track_generation_finished(self, success, message):
         self.loading_overlay.hide_loading()
@@ -5895,6 +5477,7 @@ class MainWindow(QMainWindow):
                 self.combo_track.setCurrentIndex(idx)
         else:
             QMessageBox.critical(self, "error", f"track generation failed:\n{message}")
+            
 
 
 
@@ -6008,74 +5591,177 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QTreeWidget, QTreeWidgetItem,
                              QLabel, QHeaderView, QPushButton, QMessageBox, QHBoxLayout)
 from PyQt6.QtCore import Qt
 from src.ui.compare_results import ComparisonPlotWindow
+import json
 
 class CompareWindow(QWidget):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Compare simulation logs")
-        self.resize(900, 600)
+        self.resize(1000, 700)
+        
+        self.setStyleSheet("""
+            QWidget {
+                font-family: 'Segoe UI', system-ui, sans-serif;
+                font-size: 10pt;
+                color: #334155;
+                background-color: #f8f9fa;
+            }
+            QLabel#TitleLabel {
+                font-size: 18px; 
+                font-weight: bold; 
+                color: #0f172a;
+                margin-bottom: 2px;
+            }
+            QLabel#HintLabel {
+                color: #64748b; 
+                margin-bottom: 10px;
+            }
+            
+            /* --- TABULKA --- */
+            QTreeWidget {
+                background-color: #ffffff;
+                border: 1px solid #e2e8f0;
+                border-radius: 8px;
+                outline: none;
+            }
+
+            QTreeWidget::item {
+                padding: 10px;
+                border-bottom: 1px solid #f1f5f9;
+                color: #334155;
+            }
+            
+            /* Hover efekt */
+            QTreeWidget::item:hover {
+                background-color: #f8fafc;
+            }
+
+           /* Moderní selection s trvalým okrajem nahoře a dole */
+            QTreeWidget::item:selected {
+                background-color: #eff6ff;
+                color: #2563eb;            
+                outline: none;
+                border-top: 1px solid #3b82f6;
+                border-bottom: 1px solid #3b82f6;
+            }
+            
+            /* Aby řádek zůstal stejně zvýrazněný, i když klikneš jinam (ztratí focus) */
+            QTreeWidget::item:selected:!active {
+                background-color: #eff6ff;
+                color: #2563eb;
+                outline: none;
+                border-top: 1px solid #3b82f6;
+                border-bottom: 1px solid #3b82f6;
+            }
+
+            QHeaderView::section {
+                background-color: #ffffff;
+                padding: 10px;
+                border: none;
+                border-bottom: 2px solid #3b82f6;
+                font-weight: bold;
+                color: #1e293b;
+            }
+            
+            /* --- TLAČÍTKA --- */
+            QPushButton {
+                font-weight: bold;
+                padding: 10px 20px;
+                border-radius: 6px;
+                border: none;
+            }
+            QPushButton#BtnRefresh {
+                background-color: #64748b;
+                color: white;
+            }
+            QPushButton#BtnRefresh:hover {
+                background-color: #475569;
+            }
+            QPushButton#BtnCompare {
+                background-color: #3b82f6;
+                color: white;
+            }
+            QPushButton#BtnCompare:hover {
+                background-color: #2563eb;
+            }
+            
+            /* --- CHECKBOXY V TABULCE --- */
+            /* Snažíme se vnutit větší velikost, občas Qt ignoruje width/height, 
+               tak zkusíme margin a padding */
+            QTreeWidget::indicator {
+                width: 18px;
+                height: 18px;
+                border-radius: 4px;
+                border: 2px solid #cbd5e1; 
+                background-color: #ffffff;
+            }
+            QTreeWidget::indicator:hover {
+                border-color: #3b82f6;
+            }
+            QTreeWidget::indicator:checked {
+                background-color: #3b82f6;
+                border-color: #3b82f6;
+                /* Pokud by fajfka zmizela, přidáme ji pomocí base64 nebo cesty: */
+                /* image: url("data/icons/check.png"); */
+            }
+        """)
         
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(10)
         
         # 1. Header
         lbl_title = QLabel("Select simulations to compare")
-        lbl_title.setStyleSheet("font-size: 16px; font-weight: bold; margin-bottom: 5px;")
+        lbl_title.setObjectName("TitleLabel")
         layout.addWidget(lbl_title)
         
         lbl_hint = QLabel("Check the boxes on the left. All selected logs must be from the SAME track.")
-        lbl_hint.setStyleSheet("color: #666; margin-bottom: 10px;")
+        lbl_hint.setObjectName("HintLabel")
         layout.addWidget(lbl_hint)
         
         # 2. Table (TreeWidget)
         self.tree = QTreeWidget()
-        # První sloupec bude mít checkbox
         self.tree.setHeaderLabels(["Track Name", "Lap Time (s)", "Car Config", "File / Date"])
+        # Zvětšíme odsazení, aby měl checkbox víc místa
+        self.tree.setIndentation(15) 
+        self.tree.setAlternatingRowColors(False) # Vypnuto!
         
-        # Nastavení šířky sloupců
         header = self.tree.header()
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents) # Track
-        header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents) # Time
-        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents) # Car
-        
-        self.tree.setAlternatingRowColors(True)
-        # Root decoration schováme (nemáme zanořování, je to plochý seznam)
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
+
         self.tree.setRootIsDecorated(False) 
         
+        # Zapneme škálování ikon, kdyby to QTreeWidget potřeboval pro indicator
+        self.tree.setIconSize(self.tree.iconSize() * 1.5)
+
         layout.addWidget(self.tree)
         
         # 3. Buttons Area
         btn_layout = QHBoxLayout()
+        btn_layout.setContentsMargins(0, 10, 0, 0)
         
         self.btn_refresh = QPushButton("Refresh List")
+        self.btn_refresh.setObjectName("BtnRefresh")
+        self.btn_refresh.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_refresh.clicked.connect(self.load_logs)
         
         self.btn_compare = QPushButton("Compare Selected")
+        self.btn_compare.setObjectName("BtnCompare")
         self.btn_compare.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_compare.setStyleSheet("""
-            QPushButton {
-                background-color: #007bff; 
-                color: white; 
-                font-weight: bold; 
-                padding: 10px;
-                border-radius: 4px;
-            }
-            QPushButton:hover {
-                background-color: #0056b3;
-            }
-        """)
         self.btn_compare.clicked.connect(self.on_compare_clicked)
         
         btn_layout.addWidget(self.btn_refresh)
-        btn_layout.addStretch() # Mezera
+        btn_layout.addStretch()
         btn_layout.addWidget(self.btn_compare)
         
         layout.addLayout(btn_layout)
 
-        # Načtení dat při startu
         self.load_logs()
 
     def load_logs(self):
-        """Proskenuje složku results a naplní tabulku s checkboxy."""
         self.tree.clear()
         results_dir = "results"
         
@@ -6086,34 +5772,41 @@ class CompareWindow(QWidget):
         files = glob.glob(os.path.join(results_dir, "*.npz"))
         logs_data = []
 
-        # A) Načtení metadat
         for filepath in files:
             try:
-                data = np.load(filepath, allow_pickle=True)
-                
-                track_name = str(data['track_name']) if 'track_name' in data else "Unknown"
-                lap_time = float(data['lap_time']) if 'lap_time' in data else 0.0
-                car_name = str(data['car_name']) if 'car_name' in data else "-"
-                
-                # Zformátujeme datum ze jména souboru (pokud to jde), jinak jen filename
-                filename = os.path.basename(filepath)
-                
-                logs_data.append({
-                    'track': track_name,
-                    'time': lap_time,
-                    'car': car_name,
-                    'file': filename,
-                    'path': filepath
-                })
-                data.close()
+                with np.load(filepath, allow_pickle=True) as data:
+                    track_name = str(data['track_name']) if 'track_name' in data else "Unknown"
+                    lap_time = float(data['lap_time']) if 'lap_time' in data else 0.0
+                    
+                    # --- OPRAVENÉ ZÍSKÁNÍ JMÉNA Z JSONU ---
+                    car_name = "Unknown"
+                    if 'car_config' in data:
+                        raw_config = data['car_config']
+                        if hasattr(raw_config, 'item'):
+                            raw_config = raw_config.item()
+                            
+                        try:
+                            car_dict = json.loads(str(raw_config))
+                            # Vytáhneme jméno, pokud tam není, vrátí "Unknown"
+                            car_name = car_dict.get('name', "Unknown")
+                        except Exception:
+                            pass
+                    
+                    filename = os.path.basename(filepath)
+                    
+                    logs_data.append({
+                        'track': track_name,
+                        'time': lap_time,
+                        'car': car_name,
+                        'file': filename,
+                        'path': filepath
+                    })
             except Exception as e:
                 print(f"Error reading {filepath}: {e}")
                 continue
 
-        # B) Třídění (Track -> Time)
         logs_data.sort(key=lambda x: (x['track'], x['time']))
 
-        # C) Vykreslení
         for item in logs_data:
             row = QTreeWidgetItem([
                 item['track'],
@@ -6122,28 +5815,20 @@ class CompareWindow(QWidget):
                 item['file']
             ])
             
-            # --- PŘIDÁNÍ CHECKBOXU ---
-            # Nastavíme checkbox do sloupce 0 (Track Name)
             row.setCheckState(0, Qt.CheckState.Unchecked)
-            
-            # Uložíme si cestu k souboru do skrytých dat
             row.setData(0, Qt.ItemDataRole.UserRole, item['path'])
             
             self.tree.addTopLevelItem(row)
 
+        self.tree.setCurrentItem(None)
+
     def on_compare_clicked(self):
-        """Zkontroluje výběr a spustí porovnání."""
         selected_data = []
         track_names_set = set()
         
-        # 1. Iterace přes všechny řádky
         root = self.tree.invisibleRootItem()
-        count = root.childCount()
-        
-        for i in range(count):
+        for i in range(root.childCount()):
             item = root.child(i)
-            
-            # Je checkbox zaškrtnutý?
             if item.checkState(0) == Qt.CheckState.Checked:
                 path = item.data(0, Qt.ItemDataRole.UserRole)
                 track_name = item.text(0)
@@ -6155,30 +5840,16 @@ class CompareWindow(QWidget):
                     'track': track_name,
                     'legend': f"{filename} ({lap_time}s)"
                 })
-                
                 track_names_set.add(track_name)
 
-        # 2. VALIDACE: Počet logů
         if len(selected_data) < 2:
-            QMessageBox.warning(self, "Not enough data", 
-                                "Please select at least 2 logs to compare.")
+            QMessageBox.warning(self, "Selection Required", "Please select at least 2 logs to compare.")
             return
 
-        # 3. VALIDACE: Shoda tratí
         if len(track_names_set) > 1:
-            tracks_list = ", ".join(track_names_set)
-            QMessageBox.critical(self, "Track Mismatch", 
-                                 f"You cannot compare logs from different tracks!\n\n"
-                                 f"Selected tracks: {tracks_list}\n"
-                                 f"Please select logs from the same track only.")
+            QMessageBox.critical(self, "Track Mismatch", "Please select logs from the same track only.")
             return
 
-        # 4. Success -> Spustit vizualizaci
-        # (Zatím jen print, příště uděláme okno)
-        print(f"Comparing {len(selected_data)} logs form track '{list(track_names_set)[0]}'...")
-        print(f"Comparing {len(selected_data)} logs...")
-        
-        # Uložíme do self, aby okno nezmizelo
         self.comparison_window = ComparisonPlotWindow(selected_data)
         self.comparison_window.show()
 --- KONEC SOUBORU: src\ui\results_tab.py ---
@@ -6216,11 +5887,11 @@ class ResultsWindow(QWidget):
         self.track = track
         self.ds = ds
 
-        self.resize(1100, 850)
+        
         self.center_window()
         self.setWindowTitle(f"Simulation results - {res.lap_time:.3f} s")
         
-        # --- APLIKACE MODERNÍHO VZHLEDU (QSS) ---
+       
         self.setStyleSheet("""
             QWidget {
                 font-family: 'Segoe UI', system-ui, sans-serif;
@@ -6298,6 +5969,9 @@ class ResultsWindow(QWidget):
         self.init_drs_map_tab()
         self.init_soc_tab()
 
+        self.setWindowState(Qt.WindowState.WindowMaximized)
+        self.show()
+
     def center_window(self):
         qr = self.frameGeometry()
         cp = QApplication.primaryScreen().availableGeometry().center()
@@ -6333,30 +6007,41 @@ class ResultsWindow(QWidget):
         stats_widget = QWidget()
         grid = QGridLayout(stats_widget)
         grid.setContentsMargins(0, 0, 0, 0)
-        grid.setHorizontalSpacing(30)
+        grid.setHorizontalSpacing(40) # Mírně zvětšen rozestup pro více dat
         stats_widget.setStyleSheet("background-color: transparent;")
         
         def add_stat(row, col, label, value, unit):
             lbl_name = QLabel(f"<b>{label}:</b>")
-            lbl_name.setStyleSheet("color: #64748b; font-size: 13px;")
-            lbl_val = QLabel(f"{value}")
-            lbl_val.setStyleSheet("color: #3b82f6; font-size: 16px; font-weight: bold;")
-            lbl_unit = QLabel(unit)
-            lbl_unit.setStyleSheet("color: #94a3b8; font-size: 13px;")
             lbl_name.setStyleSheet("color: #64748b; font-size: 13px; background-color: transparent;")
+            lbl_val = QLabel(f"{value}")
+            lbl_val.setStyleSheet("color: #3b82f6; font-size: 16px; font-weight: bold; background-color: transparent;")
+            lbl_unit = QLabel(unit)
+            lbl_unit.setStyleSheet("color: #94a3b8; font-size: 13px; background-color: transparent;")
             
             grid.addWidget(lbl_name, row, col)
             grid.addWidget(lbl_val, row, col+1)
             grid.addWidget(lbl_unit, row, col+2)
 
+        # Výpočty dat
         max_v = np.max(self.res.v) * 3.6
         avg_v = np.mean(self.res.v) * 3.6
         total_energy = self.res.E[-1] - self.res.E[0]
         
+        # Získání SoC hodnot (ošetření pokud res.SoC neexistuje)
+        soc_start = self.res.SoC[0] if self.res.SoC is not None else 0.0
+        soc_end = self.res.SoC[-1] if self.res.SoC is not None else 0.0
+
+        # První sloupec statistik
         add_stat(0, 0, "Lap Time", f"{self.res.lap_time:.3f}", "s")
-        add_stat(0, 3, "Energy Used", f"{total_energy:.3f}", "kWh")
         add_stat(1, 0, "Max Speed", f"{max_v:.1f}", "km/h")
+        
+        # Druhý sloupec statistik
+        add_stat(0, 3, "Energy Used", f"{total_energy:.3f}", "kWh")
         add_stat(1, 3, "Avg Speed", f"{avg_v:.1f}", "km/h")
+
+        # Třetí sloupec statistik (SoC data)
+        add_stat(0, 6, "SoC Start", f"{soc_start:.1f}", "%")
+        add_stat(1, 6, "SoC End", f"{soc_end:.1f}", "%")
         
         main_h_layout.addWidget(stats_widget)
         main_h_layout.addStretch()
@@ -6428,7 +6113,7 @@ class ResultsWindow(QWidget):
 
         if filepath:
             try:
-                save_results_to_npz(filepath, self.res, self.track, self.ds)
+                save_results_to_npz(filepath, self.res, self.track, self.ds,self.car)
                 self.btn_save.setText("Saved!")
                 self.btn_save.setStyleSheet("background-color: #10b981; color: white;")
             except Exception as e:
@@ -7581,6 +7266,341 @@ class StyleManager:
         """
 --- KONEC SOUBORU: src\ui\style_manager.py ---
 
+--- ZAČÁTEK SOUBORU: src\ui\track_generator_dialog.py ---
+import os
+from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QPushButton,
+                             QLabel, QFileDialog, QSpinBox, QRadioButton,
+                             QGroupBox, QMessageBox)
+
+from src.handlers.telemetry_parser import filter_data
+from src.ui.track_tools import run_lap_selector, manual_lap_selector, MapDRSEditor
+from src.core.trackGenerator import generate_smoothed_track
+import numpy as np
+
+class TrackGeneratorDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Track generation")
+        self.resize(400, 300)
+        
+        self.selected_file = None
+        self.init_ui()
+
+    def init_ui(self):
+        layout = QVBoxLayout()
+
+        # --- 1. Výběr souboru ---
+        file_group = QGroupBox("1. Telemetry data (.mat)")
+        file_layout = QVBoxLayout()
+        self.btn_load_file = QPushButton("Select .mat file")
+        self.btn_load_file.clicked.connect(self.load_file)
+        
+        self.lbl_file_path = QLabel("No file selected.")
+        self.lbl_file_path.setStyleSheet("color: gray; font-style: italic;")
+        self.lbl_file_path.setWordWrap(True)
+        
+        file_layout.addWidget(self.btn_load_file)
+        file_layout.addWidget(self.lbl_file_path)
+        file_group.setLayout(file_layout)
+        layout.addWidget(file_group)
+
+        # --- 2. Režim tratě ---
+        mode_group = QGroupBox("2. Track mode")
+        mode_layout = QVBoxLayout()
+        mode_group.setStyleSheet("color: black;")
+        self.radio_closed = QRadioButton("Closed circuit (Endurance / Autocross)")
+        self.radio_manual = QRadioButton("Manual section (Acceleration / Skidpad)")
+        self.radio_closed.setChecked(True) # Výchozí je uzavřený
+        
+        mode_layout.addWidget(self.radio_closed)
+        mode_layout.addWidget(self.radio_manual)
+        mode_group.setLayout(mode_layout)
+        layout.addWidget(mode_group)
+
+        # --- 3. Parametry vyhlazení ---
+        param_group = QGroupBox("3. Smoothness parameter")
+        param_layout = QHBoxLayout()
+        lbl_r = QLabel("Smoothness Factor (r):")
+        
+        self.spin_r = QSpinBox()
+        self.spin_r.setRange(100, 20000)
+        self.spin_r.setSingleStep(500)
+        self.spin_r.setValue(3000)
+        
+        param_layout.addWidget(lbl_r)
+        param_layout.addWidget(self.spin_r)
+        param_group.setLayout(param_layout)
+        layout.addWidget(param_group)
+
+        # --- 4. Tlačítko Start ---
+        self.btn_generate = QPushButton("Continue to lap selection")
+        self.btn_generate.setStyleSheet("font-weight: bold; background-color: #2E86C1; color: white; padding: 10px;")
+        self.btn_generate.setEnabled(False) # Povolíme až po výběru souboru
+        self.btn_generate.clicked.connect(self.start_generation)
+        
+        layout.addSpacing(10)
+        layout.addWidget(self.btn_generate)
+        self.setLayout(layout)
+
+    def load_file(self):
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "Select telemetry file", "", "MAT Files (*.mat);;All Files (*)"
+        )
+        if file_path:
+            self.selected_file = file_path
+            self.lbl_file_path.setText(os.path.basename(file_path))
+            self.lbl_file_path.setStyleSheet("color: black;")
+            self.btn_generate.setEnabled(True)
+
+    def start_generation(self):
+      
+        if not self.selected_file:
+            return
+        # Pouze potvrdíme a zavřeme dialog
+        self.accept()
+--- KONEC SOUBORU: src\ui\track_generator_dialog.py ---
+
+--- ZAČÁTEK SOUBORU: src\ui\track_tools.py ---
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.widgets import SpanSelector
+from scipy.signal import find_peaks
+
+class MapDRSEditor:
+    def __init__(self, x, y, s):
+        """
+        Interaktivní editor pro definici DRS zón přímo v mapě tratě.
+        """
+        self.s = s
+        self.x = x
+        self.y = y
+        self.drs_mask = np.zeros_like(self.s)
+        self.temp_start_idx = None
+        self.zones = []
+        
+        self.fig, self.ax = plt.subplots(figsize=(12, 10))
+        self.setup_plot()
+        
+        self.cid_click = self.fig.canvas.mpl_connect('button_press_event', self.on_click)
+        self.cid_key = self.fig.canvas.mpl_connect('key_press_event', self.on_key)
+        
+        print("\n>>> MANUAL DRS EDITOR:")
+        print("   1. Klikni LEVÝM myšítkem pro ZAČÁTEK zóny (Zelená tečka).")
+        print("   2. Klikni podruhé pro KONEC zóny (Červená tečka).")
+        print("   3. Klávesa 'U': Undo (smazat poslední zónu).")
+        print("   4. Klávesa 'Enter': Hotovo a uložit.\n")
+        
+        plt.show()
+
+    def setup_plot(self):
+        self.ax.set_title("Definice DRS Zón\nKlikni Start -> Klikni Konec | 'U' = Zpět | 'Enter' = Hotovo")
+        self.ax.plot(self.x, self.y, 'k-', alpha=0.1, linewidth=1, label='Track')
+        self.ax.scatter(self.x, self.y, s=1, c='gray', alpha=0.1)
+        self.ax.axis('equal')
+        
+        self.scatter_active, = self.ax.plot([], [], 'g.', markersize=4, label='DRS Active')
+        self.marker_start, = self.ax.plot([], [], 'go', markersize=10, label='Start Selection')
+        self.ax.legend(loc='upper right')
+
+    def get_nearest_index(self, x_click, y_click):
+        dist = np.sqrt((self.x - x_click)**2 + (self.y - y_click)**2)
+        return np.argmin(dist)
+
+    def on_click(self, event):
+        if event.inaxes != self.ax: return
+        if event.button != 1: return
+
+        idx = self.get_nearest_index(event.xdata, event.ydata)
+
+        if self.temp_start_idx is None:
+            self.temp_start_idx = idx
+            print(f"Start zóny: bod {idx} (s={self.s[idx]:.1f}m)")
+            self.marker_start.set_data([self.x[idx]], [self.y[idx]])
+            self.fig.canvas.draw()
+        else:
+            start = self.temp_start_idx
+            end = idx
+            print(f"Konec zóny: bod {end} (s={self.s[end]:.1f}m)")
+            self.add_zone(start, end)
+            
+            self.temp_start_idx = None
+            self.marker_start.set_data([], [])
+            self.update_visuals()
+
+    def add_zone(self, start, end):
+        track_length = self.s[-1]
+        dist_direct = abs(self.s[end] - self.s[start])
+        dist_wrap = track_length - dist_direct
+        
+        idx_min = min(start, end)
+        idx_max = max(start, end)
+        
+        if dist_direct <= dist_wrap:
+            self.drs_mask[idx_min:idx_max] = 1.0
+            self.zones.append((idx_min, idx_max, False))
+            print(f"-> Zóna přidána (Standard, délka {dist_direct:.1f}m)")
+        else:
+            self.drs_mask[:idx_min] = 1.0
+            self.drs_mask[idx_max:] = 1.0
+            self.zones.append((idx_min, idx_max, True))
+            print(f"-> Zóna přidána (Přes cíl, délka {dist_wrap:.1f}m)")
+
+    def on_key(self, event):
+        if event.key == 'u':
+            self.undo()
+        elif event.key == 'enter':
+            print("Ukládám a zavírám DRS editor...")
+            plt.close(self.fig)
+
+    def undo(self):
+        if not self.zones:
+            print("Není co vrátit.")
+            if self.temp_start_idx is not None:
+                self.temp_start_idx = None
+                self.marker_start.set_data([], [])
+                self.fig.canvas.draw()
+            return
+
+        idx_min, idx_max, is_wrap = self.zones.pop()
+        if not is_wrap:
+            self.drs_mask[idx_min:idx_max] = 0.0
+        else:
+            self.drs_mask[:idx_min] = 0.0
+            self.drs_mask[idx_max:] = 0.0
+            
+        print("Poslední zóna smazána.")
+        self.update_visuals()
+
+    def update_visuals(self):
+        mask_bool = self.drs_mask > 0.5
+        if np.any(mask_bool):
+            self.scatter_active.set_data(self.x[mask_bool], self.y[mask_bool])
+        else:
+            self.scatter_active.set_data([], [])
+        self.fig.canvas.draw()
+
+    def get_mask(self):
+        return self.drs_mask
+
+
+# ==========================================
+# POMOCNÉ FUNKCE PRO VÝBĚR KOL
+# ==========================================
+
+def get_tangent_vector(data, latitude_ref, longitude_ref):
+    lon, lat = data["Longitude"], data["Latitude"]
+    distances = np.sqrt((lon - longitude_ref)**2 + (lat - latitude_ref)**2)
+    closest_idx = np.argmin(distances)
+    vector = np.array([0.0, 0.0])
+    for i in range(1, 51):
+        if closest_idx + i < len(lon):
+            vector = np.array([lon[closest_idx + i] - lon[closest_idx],
+                               lat[closest_idx + i] - lat[closest_idx]])
+            if not np.allclose(vector, [0, 0]): break
+    return closest_idx, vector
+
+def get_lap_indices(data, point, tangent_vector):
+    lat, lon = data["Latitude"], data["Longitude"]
+    rel_long, rel_lat = lon - point[1], lat - point[0]
+    vec_norm = np.dot(tangent_vector, tangent_vector)
+    projected = np.array([np.dot([rel_long[i], rel_lat[i]], tangent_vector) / vec_norm for i in range(len(lon))])
+    minima_indices, _ = find_peaks(-np.abs(projected))
+    return [i for i in minima_indices if (abs(rel_long[i]) + abs(rel_lat[i])) < 0.0001]
+
+def manual_lap_selector(data):
+    t, v, p, b = data["Time"], data["Speed"], data["Power"], data["Brake"]
+    selected = {"idx": None}
+
+    fig, axs = plt.subplots(3, 1, sharex=True, figsize=(12, 9))
+    axs[0].plot(t, v, label="Speed [m/s]")
+    axs[1].plot(t, p, label="Power [W]", color="orange")
+    axs[2].plot(t, b, label="Brake", color="red")
+
+    for ax in axs: ax.grid(True); ax.legend()
+
+    def onselect(t_min, t_max):
+        s, e = np.searchsorted(t, t_min), np.searchsorted(t, t_max)
+        selected["idx"] = (s, e)
+        for ax in axs: ax.axvspan(t_min, t_max, color="yellow", alpha=0.3)
+        print(f"Vybráno: idx [{s}:{e}] | time {(t[e]-t[s]):.2f}s")
+        fig.canvas.draw_idle()
+
+    span = SpanSelector(axs[0], onselect, "horizontal", useblit=True, props=dict(facecolor="yellow", alpha=0.3))
+    plt.suptitle("Vyber jeden celý lap / úsek myší a zavři okno")
+    plt.show()
+
+    if selected["idx"] is None: return None
+    s, e = selected["idx"]
+    return [{"indices": (s, e), "time": t[e] - t[s]}] # Zabaleno do listu pro konzistenci s multi-lap
+
+def run_lap_selector(filtered_data):
+    fig1, ax1 = plt.subplots(figsize=(10, 8))
+    ax1.plot(filtered_data["Longitude"], filtered_data["Latitude"], ",", color='gray', alpha=0.3)
+    ax1.set_title("1. Klikni na Start/Finish\n2. Stiskni ENTER pro potvrzení")
+    
+    selected = {'idx': None, 'vec': None, 'laps': []}
+    temp_plot = []
+
+    def on_click(event):
+        if event.inaxes != ax1: return
+        for e in temp_plot: e.remove()
+        temp_plot.clear()
+        idx, vec = get_tangent_vector(filtered_data, event.ydata, event.xdata)
+        selected.update({'idx': idx, 'vec': vec})
+        p, = ax1.plot(filtered_data["Longitude"][idx], filtered_data["Latitude"][idx], "ro", markersize=10)
+        temp_plot.append(p)
+        fig1.canvas.draw()
+
+    def on_key_init(event):
+        if event.key == "enter" and selected['idx'] is not None:
+            pt = [filtered_data["Latitude"][selected['idx']], filtered_data["Longitude"][selected['idx']]]
+            selected['laps'] = get_lap_indices(filtered_data, pt, selected['vec'])
+            plt.close(fig1)
+
+    fig1.canvas.mpl_connect("button_press_event", on_click)
+    fig1.canvas.mpl_connect("key_press_event", on_key_init)
+    plt.show()
+
+    if len(selected['laps']) < 2: return None
+
+    lap_indices = selected['laps']
+    laps_data = [{'indices': (lap_indices[i], lap_indices[i+1]), 'time': filtered_data["Time"][lap_indices[i+1]] - filtered_data["Time"][lap_indices[i]]} for i in range(len(lap_indices) - 1)]
+
+    state = {'current': 0, 'selected': []}
+    fig2, ax2 = plt.subplots(figsize=(10, 8))
+    
+    def update_plot():
+        ax2.clear()
+        idx = state['current']
+        s, e = laps_data[idx]['indices']
+        ax2.plot(filtered_data["Longitude"], filtered_data["Latitude"], ",", color='gray', alpha=0.1)
+        ax2.plot(filtered_data["Longitude"][s:e], filtered_data["Latitude"][s:e], "b-", linewidth=2)
+        ax2.set_title(f"Kolo {idx+1}/{len(laps_data)} | Čas: {laps_data[idx]['time']:.3f}s\nŠipky: Listovat | A: Přidat | D: Hotovo (3 kola) | Esc: Zrušit | Vybráno: {len(state['selected'])}/3")
+        fig2.canvas.draw()
+
+    def on_key_browse(event):
+        if event.key == "right": state['current'] = (state['current'] + 1) % len(laps_data)
+        elif event.key == "left": state['current'] = (state['current'] - 1) % len(laps_data)
+        elif event.key == "a":
+            cur = laps_data[state['current']]
+            if cur not in state['selected']:
+                if len(state['selected']) < 3:
+                    state['selected'].append(cur)
+                    print(f"Přidáno kolo {state['current']+1} | Celkem: {len(state['selected'])}/3")
+                else: print("Už máte 3 kol. Stiskněte D pro dokončení.")
+        elif event.key == "d":
+            if len(state['selected']) > 0: plt.close(fig2)
+            else: print("Vyberte alespoň jedno kolo.")
+        elif event.key == "escape": plt.close(fig2)
+        update_plot()
+
+    fig2.canvas.mpl_connect("key_press_event", on_key_browse)
+    update_plot()
+    plt.show()
+
+    return state['selected'] if len(state['selected']) != 0 else None
+--- KONEC SOUBORU: src\ui\track_tools.py ---
+
 --- ZAČÁTEK SOUBORU: src\ui\__init__.py ---
 
 --- KONEC SOUBORU: src\ui\__init__.py ---
@@ -7641,7 +7661,7 @@ class ConfigManager:
             print(f"failed to save vehicle '{name}': {e}")
 --- KONEC SOUBORU: src\utils\config_manager.py ---
 
---- ZAČÁTEK SOUBORU: src\utils\drs_69.py ---
+--- ZAČÁTEK SOUBORU: src\utils\plot_drs.py ---
 import numpy as np
 import matplotlib.pyplot as plt
 
@@ -7668,7 +7688,7 @@ plt.grid(True)
 plt.legend()
 plt.show()
 
---- KONEC SOUBORU: src\utils\drs_69.py ---
+--- KONEC SOUBORU: src\utils\plot_drs.py ---
 
 --- ZAČÁTEK SOUBORU: src\utils\plot_soc_limit.py ---
 import casadi as ca
@@ -7687,7 +7707,7 @@ def get_recuperation_limit(SoC_ca):
     """
     """
     P_max = 40e3      # 40 kW limit
-    soc_mid = 0.885   # Kde křivka protíná 20 kW
+    soc_mid = 0.885   
     k = 120.0         # Strmost poklesu
     
     return P_max / (1.0 + ca.exp(k * (SoC_ca - soc_mid)))
@@ -7801,18 +7821,33 @@ plt.show()
 --- ZAČÁTEK SOUBORU: src\utils\saver.py ---
 import numpy as np
 import os
+import json
 from scipy.interpolate import interp1d
 
-def save_results_to_npz(filepath, res, track, ds):
+def save_results_to_npz(filepath, res, track, ds, car=None):
     
-    
-    #results folder has to exist
+    # results folder has to exist
     directory = os.path.dirname(filepath)
     if directory and not os.path.exists(directory):
         os.makedirs(directory)
 
     sens_array = np.array([res.sens]) if res.sens else np.array([])
-
+    
+    car_config_str = "{}"
+    if car is not None:
+        
+        target_keys = [
+            "weight", "cd", "cd_drs", "cl", "cl_drs", 
+            "cop", "power_max", "regen_eff",
+            "model_type", "energy_limit", "drs_allowed", "soc_start","name"
+        ]
+        
+        car_dict = {}
+        for key in target_keys:
+           
+            car_dict[key] = getattr(car, key, None)
+            
+        car_config_str = json.dumps(car_dict)
 
     print(f"Saving results to: {filepath}")
 
@@ -7824,12 +7859,12 @@ def save_results_to_npz(filepath, res, track, ds):
     
     np.savez_compressed(
         filepath,
-        #main data
+        # main data
         t=res.t,
         v=res.v,
         s=res.s,
-        x= x_aligned,
-        y= y_aligned,
+        x=x_aligned,
+        y=y_aligned,
         E=res.E,
         f_acc=res.f_acc,
         f_brake=res.f_brake,
@@ -7837,9 +7872,12 @@ def save_results_to_npz(filepath, res, track, ds):
         # scalar values
         lap_time=res.lap_time,
         
-        #metadata
+        # metadata
         track_name=str(track.name),
         ds=float(ds),
+        
+        # Zfiltrovaný JSON auta
+        car_config=car_config_str,
         
         # sensitivity dictionary
         sens=sens_array
@@ -7901,17 +7939,13 @@ for sim in range(Num_Simulations):
     # Plot each simulation
     plt.plot(laps_vector, grip_history, color=(0.2, 0.6, 1.0, 0.3), linewidth=1.5)
 
-# ---------------------------
-# IDEAL CURVE (NO NOISE)
-# ---------------------------
+
 ideal_curve = mu_cold + (mu_optimal - mu_cold) * (1 - np.exp(-laps_vector / Tire_Model["Warmup_Tau"]))
 plt.plot(laps_vector, ideal_curve, "r--", linewidth=2, label="Ideal warmup")
 
 plt.axhline(Base_Mu_X, color="black", linestyle="-", label="Optimal Grip")
 
-# ---------------------------
-# PLOT STYLING
-# ---------------------------
+
 plt.title(
     f"Tire evolution model (Start: {Tire_Model['Cold_Factor']*100:.0f}%, Tau: {Tire_Model['Warmup_Tau']:.1f})"
 )

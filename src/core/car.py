@@ -6,6 +6,7 @@ import casadi as ca
 @dataclass
 class Car:
     # --- 1. Parameters from UI ---
+    name: str
     weight: float           # [kg]
     cd: float             # [-] 
     cl: float             # [-]
@@ -92,12 +93,10 @@ class Car:
     
 
     def get_recuperation_limit(self, SoC_ca):
-        """
-        Vrací spojitý (hladký) limit rekuperace ve Wattech pro dané SoC.
-        """
-        P_max = 40e3   # 40 kW limit
-        soc_mid = 0.885 # Kde křivka protíná 20 kW
-        k = 120.0       # Strmost poklesu
+       
+        P_max = 40e3   
+        soc_mid = 0.885 
+        k = 120.0       
         
         return P_max / (1.0 + ca.exp(k * (SoC_ca - soc_mid)))
     
@@ -136,7 +135,7 @@ class Car:
 
         Fz = weight * self.g + F_aero
         
-        # OPRAVA: Tady musí být násobení self.mu_x a self.mu_y, nikoliv weight!
+       
         max_x = self.mu_x * Fz
         max_y = self.mu_y * Fz
         
@@ -161,7 +160,7 @@ class Car:
         #term_safe = ca.log(1 + ca.exp(term))
         #dy =ca.sqrt(term_safe)
         max_lateral_sq = (self.mu_y * fz)**2 - fx**2
-        # Použijeme fmax, aby pod odmocninou bylo minimálně 1e-6
+        
         dy = ca.sqrt(ca.fmax(max_lateral_sq, 1))
         return dy
 

@@ -132,6 +132,10 @@ class SimulationApp:
                 if isinstance(win, LaptimeAppMainWindow):
                     win.add_result_tab(payload)
                     break
+                
+        elif kind == "track_generation":
+            # route the smoothed track data back to main window to finish the DRS / Save process
+            self.main_window.finish_track_generation(data)
 
     def handle_error(self, err_msg):
         

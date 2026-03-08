@@ -34,3 +34,12 @@ class StrategyOptRequest(BaseRequest):
 class DeploymentOptRequest(StrategyOptRequest):
     # inherits all fields from strategyoptrequest, used just for routing
     pass
+
+@dataclass
+class TrackGenerationRequest(BaseRequest):
+    # request for track generation and smoothing
+    data: dict
+    lap_infos: list
+    is_closed: bool
+    r_penalty: float
+    w_penalty: float

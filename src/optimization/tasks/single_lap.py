@@ -1,5 +1,5 @@
 import time
-from src.optimization.solver import InitConditions
+from src.optimization.solvers.base_solver import InitConditions
 from .base_task import SimulationTask, SolverPayload
 
 class SingleLapTask(SimulationTask):
@@ -19,12 +19,10 @@ class SingleLapTask(SimulationTask):
         else:
             init_cond = InitConditions(v=5, T=0.0, E=E)
 
-       # init_guess = calculate_initial_guess_single(self.car, self.track, init_cond, ds=self.ds)
+       # init_guess = calculate_initial_guess(self.car, self.track, init_cond, ds=self.ds)
         
-        if not self.solver.rk4:
-            res = self.solver.solveLap(init_cond, ds=self.ds, init_guess=None)
-        else:
-            res = self.solver.solveLap_rk4(init_cond, ds=self.ds, init_guess=None)
+    
+        res = self.solver.solve(init_cond, ds=self.ds, init_guess=None)
         
         end = time.time()
         print(f"Time elapsed: {end - start:.2f} s")
