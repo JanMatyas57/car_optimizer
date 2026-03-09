@@ -6,10 +6,8 @@ from scipy.spatial import ConvexHull
 from src.optimization.solvers.base_solver import BaseSolver, SolverResults, InitConditions
 
 
-
 class Tire:
     def __init__(self, filename, Rl=0.2, rr=0.015):
-        # Default fallback if the path is relative to the execution root
         if not os.path.exists(filename):
             filename = os.path.join("src", "core", "pacejka94.txt")
             
@@ -31,15 +29,16 @@ class Tire:
         self.mu_y_grad = self.data[14]
         self.mu_x_grad = self.data[15]
         self.Rl = Rl                 
-        self.rr = rr                 
+        self.rr = rr
+        self.track_grip_factor = 0.75                 
 
     def Fy(self, alpha, Fz):
-        Dy = self.Dy - self.mu_y_grad * Fz
+        Dy = (self.Dy - self.mu_y_grad * Fz) * self.track_grip_factor
         Fy = Fz * Dy * np.sin(self.Cy * np.arctan(self.By * alpha - self.Ey * (self.By * alpha - np.arctan(self.By * alpha))))
         return Fy
     
     def Fx(self, kappa, Fz):
-        Dx = self.Dx - self.mu_x_grad * Fz
+        Dx = (self.Dx - self.mu_x_grad * Fz) * self.track_grip_factor
         resistance = Fz * self.rr
         Fx = Fz * Dx * np.sin(self.Cx * np.arctan(self.Bx * kappa - self.Ex * (self.Bx * kappa - np.arctan(self.Bx * kappa)))) - resistance
         return Fx
@@ -53,7 +52,6 @@ class Tire:
 
 
 class QS_Car:
-    
     def __init__(self, tire_file, ay_max, ax_max, v_max, m, CoGz, WB, TW, wd, CdA, ClA, CoP, P_max, gear_res, M_max, i, Rl):
         self.tire = Tire(tire_file, Rl=Rl)
         self.ay_max = ay_max         
@@ -70,7 +68,8 @@ class QS_Car:
         self.P_max = P_max           
         self.gear_res = gear_res     
         self.M_max = M_max          
-        self.i = i                   
+        self.i = i
+        self.brake_bias = 0.6             
 
     def Fd(self, v, rho=1.225): 
         return 0.5 * rho * self.CdA * v**2
@@ -85,7 +84,7 @@ class QS_Car:
         return 0.5 * rho * self.ClA * v**2
 
     def Favailable(self, v): 
-        v = max(v, 1.0) # avoid division by zero
+        v = max(v, 1.0) 
         omega_wheel = v / self.tire.Rl 
         omega_motor = omega_wheel * self.i  
         if omega_motor * 4 * self.M_max < self.P_max * 1000: 
@@ -170,6 +169,25 @@ class QS_Car:
         Fx_FR_w, Fy_FR_w = self.friction_ellipse_limit(Fx_FR, Fy_FR, N_FR)
         Fx_RL_w, Fy_RL_w = self.friction_ellipse_limit(Fx_RL, Fy_RL, N_RL)
         Fx_RR_w, Fy_RR_w = self.friction_ellipse_limit(Fx_RR, Fy_RR, N_RR)
+    
+    
+        if kappa < 0 and self.brake_bias is not None and 0 < self.brake_bias < 1:
+         
+            Fx_front_cap = Fx_FL_w + Fx_FR_w
+            Fx_rear_cap = Fx_RL_w + Fx_RR_w
+
+     
+            F_total_limit_front = Fx_front_cap / self.brake_bias
+            F_total_limit_rear = Fx_rear_cap / (1.0 - self.brake_bias)
+
+          
+            F_total_actual = max(F_total_limit_front, F_total_limit_rear)
+
+
+            Fx_FL_w = (F_total_actual * self.brake_bias) / 2.0
+            Fx_FR_w = (F_total_actual * self.brake_bias) / 2.0
+            Fx_RL_w = (F_total_actual * (1.0 - self.brake_bias)) / 2.0
+            Fx_RR_w = (F_total_actual * (1.0 - self.brake_bias)) / 2.0
 
         Fx_FL = Fx_FL_w * np.cos(delta) - Fy_FL_w * np.sin(delta)
         Fx_FR = Fx_FR_w * np.cos(delta) - Fy_FR_w * np.sin(delta)
@@ -184,7 +202,6 @@ class QS_Car:
         return Fx_FL, Fy_FL, Fx_FR, Fy_FR, Fx_RL, Fy_RL, Fx_RR, Fy_RR 
 
     def find_GGV(self, delta_max, beta_max, kappa_max, tol, N=9):
-        # note: reduced N from 21 to 9 for decent calculation speed before lap
         delta = np.linspace(0, delta_max, N)  
         beta = np.linspace(0, beta_max, N)
         kappa = np.linspace(-kappa_max, kappa_max, N)  
@@ -223,7 +240,6 @@ class QS_Car:
                             ay = Fy / self.m
                             r = ay / v_i
 
-                            # numerical damping
                             r = (1 * r + 2 * r_old) / 3
                             ay = (1 * ay + 2 * ay_old) / 3
                             ax = (1 * ax + 2 * ax_old) / 3
@@ -348,38 +364,28 @@ class QuasiSteadySolver(BaseSolver):
     def __init__(self, car, track, laps=1):
         super().__init__(car, track, laps)
         
-     
-        # assuming cogz = 0.3, TW (track width) = 1.2 by default if not strictly in Car
-        wd = 1.0 - self.car.weight_distrib 
-        cop = 1.0 - self.car.cop           
         
         self.qs_car = QS_Car(
             tire_file="src/core/pacejka94.txt",
-            ay_max=25.0,
+            ay_max=15.0,
             ax_max=15.0,
             v_max=40.0,
             m=self.car.weight,
             CoGz=self.car.cogz,
-            WB=self.car.wheelbase,
-            TW=1.2, 
-            wd=wd,
+            WB=self.car.wb,
+            TW=self.car.tw, 
+            wd=self.car.wd,
             CdA=self.car.cd,
             ClA=self.car.cl,
-            CoP=cop,
-            P_max=self.car.power_max / 1000.0, # kW
+            CoP=self.car.cop,
+            P_max=(self.car.power_max / 1000.0)*self.car.power_eff, # kW
             gear_res=0.0,
-            M_max=self.car.max_torque,
-            i=self.car.gear_ratio,
+            M_max=self.car.M_max,
+            i=self.car.i,
             Rl=self.car.wheel_radius
-        )
-        
-        # 2. Run GGV and build LUT in memory
-        self.qs_car.find_GGV(delta_max=0.2, beta_max=0.07, kappa_max=0.15, tol=0.1, N=9)
-        self.df = self.qs_car.create_lookup_tables(steps=40)
-        
-        # 3. Setup slices for solver
-        self._setup_luts()
 
+        )
+        print(f"Power max: {self.qs_car.P_max}")
     def _setup_luts(self):
         self.v_levels = np.sort(self.df['v'].unique())
 
@@ -464,6 +470,13 @@ class QuasiSteadySolver(BaseSolver):
         return v_test, ay_lim
 
     def solve(self, init_cond: InitConditions, init_guess=None, ds=0.5) -> SolverResults:
+        # 0. Generate GGV Map and LUTs in the worker thread 
+        print("Starting GGV map generation...")
+        self.qs_car.find_GGV(delta_max=0.2, beta_max=0.07, kappa_max=0.15, tol=0.1, N=9)
+        self.df = self.qs_car.create_lookup_tables(steps=40)
+        self._setup_luts()
+        print("GGV map generation completed. Proceeding to track sweep.")
+
         # 1. evaluate track geometry
         total_length = self.track.length
         N = int(np.round(total_length / ds))
@@ -476,8 +489,7 @@ class QuasiSteadySolver(BaseSolver):
                 radius[i] = 10000.0
             else:
                 radius[i] = 1.0 / abs(kappa[i])
-        
-        # 2. apply limit finding logic from colleague's runLapTime.py
+       
         v_limit, ay_lim = self._find_v_ay_lim(radius, 0.1)
         
         n_points = len(v_limit)
@@ -487,18 +499,31 @@ class QuasiSteadySolver(BaseSolver):
         v_fwd[0] = max(init_cond.v, 1.0)
         v_bwd[-1] = v_limit[-1]
 
+        max_jerk = 20.0  
+        a_fwd = np.zeros(n_points)
+
         # forward pass
         for i in range(n_points - 1):
             ay = min((v_fwd[i]**2) / radius[i], ay_lim[i])
-            ax_max = self._query_lut(self.slices_ay_throttle, ay, v_fwd[i])
+            ax_max_lut = self._query_lut(self.slices_ay_throttle, ay, v_fwd[i])
+            
+            F_avail = self.qs_car.Favailable(v_fwd[i])
+            F_drag = self.qs_car.Fd(v_fwd[i]) + self.car.fix_drag
+            ax_powertrain_limit = (F_avail - F_drag) / self.qs_car.m
+            
+            ax_max = min(ax_max_lut, ax_powertrain_limit)
+
             v_next = np.sqrt(max(v_fwd[i]**2 + 2 * ax_max * ds, 0))
             v_fwd[i+1] = min(v_next, v_limit[i+1])
-
+    
+        brake_driver_factor = 0.55
+        
         # backward pass
         for i in range(n_points - 1, 0, -1):
             ay = min((v_bwd[i]**2) / radius[i], ay_lim[i])
             ax_min = np.abs(self._query_lut(self.slices_ay_brake, ay, v_bwd[i]))
-            v_prev = np.sqrt(max(v_bwd[i]**2 + 2 * ax_min * ds, 0)) 
+            ax_min_effective = ax_min * brake_driver_factor
+            v_prev = np.sqrt(max(v_bwd[i]**2 + 2 * ax_min_effective * ds, 0)) 
             v_bwd[i-1] = min(v_prev, v_limit[i-1])
 
         v_final = np.minimum(v_fwd, v_bwd)
@@ -506,31 +531,39 @@ class QuasiSteadySolver(BaseSolver):
         # 3. post process arrays to match user's expected format
         v_avg = np.maximum(1e-6, 0.5 * (v_final[:-1] + v_final[1:]))
         dt_array = ds / v_avg
+        
+        
         t_final = np.concatenate(([init_cond.T], init_cond.T + np.cumsum(dt_array)))
 
+       
         acc_long = np.diff(v_final**2) / (2 * ds)
-        acc_long = np.append(acc_long, 0)
         
+       
         f_net = self.car.weight * acc_long
-        f_drag = np.array([self.car.get_aero_drag(v) for v in v_final]).flatten()
+        f_drag = np.array([self.car.get_aero_drag(v) for v in v_avg]).flatten()
         f_long_total = f_net + f_drag
         
-        f_acc = np.maximum(f_long_total, 0)
-        f_brake = np.minimum(f_long_total, 0)
+        f_acc = np.maximum(f_long_total, 0)/self.car.power_eff
+        f_brake = np.minimum(f_long_total, 0)   
+
+        E_used = np.cumsum(f_acc * v_avg * dt_array) / 3.6e6
+
+        SoC = (self.car.soc_start - E_used /self.car.acp_capacity)*100
         
-        empty_arr = np.zeros_like(v_final)
+       
+        empty_controls = np.zeros_like(v_avg)   
 
         return SolverResults(
             success=True,
             lap_time=t_final[-1] - init_cond.T,
-            t=t_final,
-            v=v_final,
-            s=s_eval,
-            f_acc=f_acc,
-            f_brake=f_brake,
-            E=empty_arr,
-            SoC=empty_arr,
-            recuperation=empty_arr,
-            drs_usage=empty_arr,
+            t=t_final,              # N+1
+            v=v_final,              # N+1
+            s=s_eval,               # N+1
+            f_acc=f_acc,            # N
+            f_brake=f_brake,        # N
+            E=E_used,               # N+1 
+            SoC=SoC,                # N+1
+            recuperation=empty_controls, # N
+            drs_usage=empty_controls,    # N
             sens={}
         )
