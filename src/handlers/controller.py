@@ -6,13 +6,13 @@ from src.optimization.solvers import InitConditions, calculate_initial_guess
 from src.optimization.work_thread import SimulationWorker
 
 # import tasks
-from src.optimization.tasks import SingleLapTask, LaptimeMapTask, StrategyOptTask, DeploymentOptTask, TrackGenerationTask
+from src.optimization.tasks import SingleLapTask, LaptimeMapTask, StrategyOptTask, DeploymentOptTask, TrackGenerationTask, OptimizationTask
 
 
 # import requests
 from src.handlers.requests import (
     SingleLapRequest, EnduranceRequest, LapMapTestRequest, 
-    StrategyOptRequest, DeploymentOptRequest, TrackGenerationRequest
+    StrategyOptRequest, DeploymentOptRequest, TrackGenerationRequest, OptimizationRequest
 )
 
 class SimulationController(QObject):
@@ -65,6 +65,17 @@ class SimulationController(QObject):
                 # track generation task doesnt use the car object
                 task = TrackGenerationTask(
                     req.data, req.lap_infos, req.is_closed, req.r_penalty, req.w_penalty
+                )
+            
+            elif isinstance(req, OptimizationRequest):
+                # Zde nevytváříme 'car' a 'solver' přímo v kontroleru, 
+                # protože to za nás udělá OptimizationTask pro každý trial.
+                task = OptimizationTask(
+                    car_params=req.car_params,
+                    ds=req.ds,
+                    vehicle_name=req.vehicle_name,
+                    tracks=req.tracks,
+                    bounds=req.bounds
                 )
 
             elif isinstance(req, (StrategyOptRequest, DeploymentOptRequest)):

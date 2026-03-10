@@ -21,7 +21,7 @@ class SingleLapTask(SimulationTask):
 
        # init_guess = calculate_initial_guess(self.car, self.track, init_cond, ds=self.ds)
         
-    
+        #ggv = self.solver.qs_car.find_GGV(delta_max=0.2, beta_max=0.07, kappa_max=0.15, tol=0.1, N=9)
         res = self.solver.solve(init_cond, ds=self.ds, init_guess=None)
         
         end = time.time()

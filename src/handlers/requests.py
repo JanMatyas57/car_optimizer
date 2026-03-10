@@ -43,3 +43,10 @@ class TrackGenerationRequest(BaseRequest):
     is_closed: bool
     r_penalty: float
     w_penalty: float
+
+
+@dataclass
+class OptimizationRequest(BaseRequest):
+    vehicle_name: str
+    tracks: list      
+    bounds: dict      

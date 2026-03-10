@@ -385,7 +385,23 @@ class QuasiSteadySolver(BaseSolver):
             Rl=self.car.wheel_radius
 
         )
-        print(f"Power max: {self.qs_car.P_max}")
+        #print(f"Power max: {self.qs_car.P_max}")
+
+
+    def generate_ggv(self):
+        self.qs_car.find_GGV(delta_max=0.2, beta_max=0.07, kappa_max=0.15, tol=0.1, N=9)
+        self.df = self.qs_car.create_lookup_tables(steps=40)
+        self._setup_luts()
+
+    def set_ggv(self, df, slices_ax_pos, slices_ax_neg, slices_ay_throttle, slices_ay_brake):
+       
+        self.df = df
+        self.slices_ax_pos = slices_ax_pos
+        self.slices_ax_neg = slices_ax_neg
+        self.slices_ay_throttle = slices_ay_throttle
+        self.slices_ay_brake = slices_ay_brake
+        self.v_levels = np.sort(self.df['v'].unique())
+
     def _setup_luts(self):
         self.v_levels = np.sort(self.df['v'].unique())
 
@@ -470,12 +486,8 @@ class QuasiSteadySolver(BaseSolver):
         return v_test, ay_lim
 
     def solve(self, init_cond: InitConditions, init_guess=None, ds=0.5) -> SolverResults:
-        # 0. Generate GGV Map and LUTs in the worker thread 
-        print("Starting GGV map generation...")
-        self.qs_car.find_GGV(delta_max=0.2, beta_max=0.07, kappa_max=0.15, tol=0.1, N=9)
-        self.df = self.qs_car.create_lookup_tables(steps=40)
-        self._setup_luts()
-        print("GGV map generation completed. Proceeding to track sweep.")
+        if not hasattr(self, 'df'):
+            self.generate_ggv()
 
         # 1. evaluate track geometry
         total_length = self.track.length

@@ -10,9 +10,10 @@ from PyQt6.QtCore import Qt, pyqtSignal
 # track for rendering
 from src.core.track import Track
 from src.core.trackGenerator import TrackGenerator
-from src.handlers.requests import SingleLapRequest, EnduranceRequest, LapMapTestRequest
+from src.handlers.requests import SingleLapRequest, EnduranceRequest, LapMapTestRequest,OptimizationRequest
 from src.ui.loader import LoadingOverlay
 from src.ui.track_generator_dialog import TrackGeneratorDialog
+from src.ui.optimization_dialog import OptimizationDialog
 from src.utils.config_manager import ConfigManager
 from src.ui.track_tools import DRSEditorDialog
 import os
@@ -178,6 +179,7 @@ class MainWindow(QMainWindow):
         self.controller.simulationProgress.connect(self.loading_overlay.update_progress)
         self.controller.simulationFinished.connect(lambda _: self.loading_overlay.hide_loading())
         self.controller.simulationError.connect(lambda _: self.loading_overlay.hide_loading())
+
 
         # initial loads
         self.load_track_list()
@@ -354,6 +356,12 @@ class MainWindow(QMainWindow):
         self.btn_run.clicked.connect(self.on_run_single_clicked)
         layout.addWidget(self.btn_run)
 
+        self.btn_optimize = QPushButton("Optimize car")
+        self.btn_optimize.setObjectName("BtnOptimize")
+        self.btn_optimize.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_optimize.clicked.connect(self.on_optimize_car_clicked)
+        layout.addWidget(self.btn_optimize)
+
         self.btn_endurance_strategy = QPushButton("Endurance strategy")
         self.btn_endurance_strategy.setObjectName("BtnEndurance")
         self.btn_endurance_strategy.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -511,6 +519,34 @@ class MainWindow(QMainWindow):
     def on_endurance_strategy_clicked(self):
         track_name = self.combo_track.currentText()
         self.openStrategyRequested.emit(track_name)
+
+    def on_optimize_car_clicked(self):
+      
+        dialog = OptimizationDialog(self.current_vehicle_name, self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            opt_data = dialog.get_optimization_data()
+            
+            
+            base_car_params = ConfigManager.load_vehicle(opt_data["vehicle_name"], self.default_params)
+
+            base_car_params.pop("laps", None)
+            base_car_params.pop("ds", None) 
+            base_car_params.pop("mass", None)
+            
+            p_kw = base_car_params.pop("power_limit", 80.0)
+            base_car_params["power_max"] = p_kw * 1000.0
+            
+          
+            req = OptimizationRequest(
+                car_params=base_car_params,
+                ds=self.input_ds.value(), 
+                vehicle_name=opt_data["vehicle_name"],
+                tracks=opt_data["tracks"],
+                bounds=opt_data["bounds"]
+            )
+            
+            
+            self.controller.handle_request(req)
 
     def on_compare_clicked(self):
         self.openCompareRequested.emit()

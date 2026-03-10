@@ -176,6 +176,8 @@ class StyleManager:
             QPushButton#BtnEndurance:hover { background-color: #0891b2; }
             QPushButton#BtnLapMap { background-color: #64748b; }
             QPushButton#BtnLapMap:hover { background-color: #475569; }
+            QPushButton#BtnOptimize { background-color: #0c43e8; }
+            QPushButton#BtnOptimize:hover { background-color: #20059c; }
             
             QPushButton#BtnTool {
                 background-color: #e2e8f0;
