@@ -5,11 +5,13 @@ from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QGroupBox,
                              QLabel, QDoubleSpinBox, QPushButton, QGridLayout, QMessageBox)
 from PyQt6.QtCore import Qt
 from src.utils.config_manager import ConfigManager
+from src.ui.optimization_results_dialog import OptimizationResultsDialog
+from src.ui.load_optimization_dialog import LoadOptimizationDialog
 
 class OptimizationDialog(QDialog):
     def __init__(self, current_vehicle_name, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Car Parameters Optimization")
+        self.setWindowTitle("Car parameters optimization")
         self.setMinimumWidth(500)
         self.setMinimumHeight(600)
         
@@ -34,7 +36,7 @@ class OptimizationDialog(QDialog):
         layout_car.addWidget(self.combo_vehicle)
         layout.addWidget(group_car)
         
-        # --- 2. Track Selection ---
+      
         group_tracks = QGroupBox("2. Tracks to evaluate")
         group_tracks.setStyleSheet("QGroupBox { border: 1px solid #3b82f6; }")
         layout_tracks = QVBoxLayout(group_tracks)
@@ -56,12 +58,11 @@ class OptimizationDialog(QDialog):
         layout_tracks.addWidget(scroll_tracks)
         layout.addWidget(group_tracks)
         
-        
+      
         group_params = QGroupBox("3. Parameters bounds")
         group_params.setStyleSheet("QGroupBox { border: 1px solid #3b82f6; }")
         layout_params = QGridLayout(group_params)
         
-   
         layout_params.addWidget(QLabel("Optimize"), 0, 0)
         layout_params.addWidget(QLabel("Parameter"), 0, 1)
         layout_params.addWidget(QLabel("Min bound"), 0, 2)
@@ -79,7 +80,7 @@ class OptimizationDialog(QDialog):
         
         for i, (key, label, def_min, def_max, step) in enumerate(params_setup, start=1):
             cb_enable = QCheckBox()
-            cb_enable.setChecked(True) # 
+            cb_enable.setChecked(True) 
             
             lbl_name = QLabel(label)
             
@@ -93,7 +94,6 @@ class OptimizationDialog(QDialog):
             spin_max.setSingleStep(step)
             spin_max.setValue(def_max)
             
-          
             cb_enable.toggled.connect(spin_min.setEnabled)
             cb_enable.toggled.connect(spin_max.setEnabled)
             
@@ -111,12 +111,18 @@ class OptimizationDialog(QDialog):
         self.btn_cancel = QPushButton("Cancel")
         self.btn_cancel.clicked.connect(self.reject)
         
+        
+        self.btn_load_run = QPushButton("Load Previous Run")
+        self.btn_load_run.setObjectName("BtnOptimize") 
+        self.btn_load_run.clicked.connect(self.load_previous_run)
+        
         self.btn_start = QPushButton("Start optimization")
         self.btn_start.setObjectName("BtnRunSingle") 
         self.btn_start.clicked.connect(self.validate_and_accept)
         
         btn_layout.addStretch()
         btn_layout.addWidget(self.btn_cancel)
+        btn_layout.addWidget(self.btn_load_run) 
         btn_layout.addWidget(self.btn_start)
         layout.addLayout(btn_layout)
 
@@ -131,13 +137,13 @@ class OptimizationDialog(QDialog):
                 self.track_checkboxes[t_name] = cb
 
     def validate_and_accept(self):
-        # Kontrola, zda je vybraná alespoň jedna trať
+    
         selected = [n for n, cb in self.track_checkboxes.items() if cb.isChecked()]
         if not selected:
             QMessageBox.warning(self, "Warning", "Please select at least one track for optimization.")
             return
             
-        # Kontrola min < max
+      
         for key, w in self.param_widgets.items():
             if w["enable"].isChecked() and w["min"].value() >= w["max"].value():
                 QMessageBox.warning(self, "Warning", f"Min bound must be strictly less than Max bound for {key}!")
@@ -157,3 +163,13 @@ class OptimizationDialog(QDialog):
             "tracks": selected_tracks,
             "bounds": bounds
         }
+    
+    def load_previous_run(self):
+        dialog = LoadOptimizationDialog(self)
+        if dialog.exec():
+          
+            json_data = dialog.selected_data
+            
+            
+            res_dialog = OptimizationResultsDialog(payload=None, json_data=json_data, parent=self)
+            res_dialog.exec()

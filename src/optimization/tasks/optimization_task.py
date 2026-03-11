@@ -13,6 +13,8 @@ class OptimizationPayload:
     best_lap_time: float
     study: optuna.Study
     base_vehicle_name: str
+    base_car_params: dict  
+    tracks: list           
 
 class OptimizationTask(SimulationTask):
     def __init__(self, car_params: dict, ds: float, vehicle_name: str, tracks: list, bounds: dict):
@@ -22,7 +24,7 @@ class OptimizationTask(SimulationTask):
         self.vehicle_name = vehicle_name
         self.bounds = bounds
        
-        self.n_trials = 200
+        self.n_trials = 10
         
         self.loaded_tracks = [Track.load(t_name) for t_name in tracks]
 
@@ -63,35 +65,34 @@ class OptimizationTask(SimulationTask):
                     slices_ay_brake=base_solver.slices_ay_brake
                 )
                 
-                # Volání solveru s příslušným krokem ds
                 res = solver.solve(ds=self.ds, init_cond=init_cond)
                 
-                # Přičteme čas na kolo (spoléháme se, že solver dojede díky fwd/bwd passu)
+          
                 total_lap_time += res.lap_time
                 
             return total_lap_time
 
-        # Ztlumíme logování Optuny do konzole, abychom z toho neměli spam
         optuna.logging.set_verbosity(optuna.logging.WARNING)
 
-        # Vytvoření studie (hledáme minimum celkového času)
         study = optuna.create_study(direction="minimize")
         
-        # Callback funkce pro update UI (Progress Baru) po každém trialu
+        
         def optuna_callback(study, trial):
             if progress_callback:
-                # Pošleme do okna: (aktuální iterace, celkem iterací)
+                
                 progress_callback(len(study.trials), self.n_trials)
 
-        # Spuštění optimalizace
+
         study.optimize(objective, n_trials=self.n_trials, callbacks=[optuna_callback])
         
-        # Vrácení naší definované datastruktury (zachytí to Worker a pošle Kontroleru)
+        
         results = OptimizationPayload(
             best_params=study.best_params,
             best_lap_time=study.best_value,
             study=study,
-            base_vehicle_name=self.vehicle_name
+            base_vehicle_name=self.vehicle_name,
+            base_car_params=self.base_car_params,        
+            tracks=[t.name for t in self.loaded_tracks]
         )
 
         return SolverPayload(

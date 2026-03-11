@@ -135,9 +135,8 @@ class SimulationApp:
                     break
 
         elif kind == "optimization":
-            # data v tomto případě bude náš OptimizationPayload
-            win = OptimizationResultsDialog(data, self.main_window)
-            win.show() # Dialogy stačí ukázat přes .show() nebo .exec()
+            win = OptimizationResultsDialog(payload=data, parent=self.main_window)
+            win.show()
                 
         elif kind == "track_generation":
             # route the smoothed track data back to main window to finish the DRS / Save process

@@ -18,7 +18,7 @@ class StyleManager:
         return """
             /* --- ZÁKLADNÍ OKNA A TEXTY --- */
             QMainWindow, QDialog {
-                background-color: #f8f9fa; /* Změněno na čistší světlou z ResultsWindow */
+                background-color: #f8f9fa; 
                 font-family: 'Segoe UI', system-ui, sans-serif;
                 color: #334155;
             }
@@ -28,7 +28,7 @@ class StyleManager:
                 font-weight: 500;
             }
             
-            /* --- ZÁLOŽKY (TABS) --- */
+            /* tabs */
             QTabWidget::pane {
                 border: 1px solid #e2e8f0;
                 background-color: #ffffff;
@@ -56,7 +56,7 @@ class StyleManager:
                 color: #0f172a;
             }
 
-            /* --- KONTEJNERY A BOXY --- */
+            /* boxes */
             QGroupBox {
                 background-color: #ffffff;
                 border: 1px solid #3b82f6;
@@ -75,7 +75,7 @@ class StyleManager:
                 color: #64748b;
             }
             
-            /* Speciální šedý GroupBox z ResultsWindow */
+    
             QGroupBox#HighlightedGroup {
                 background-color: #f1f5f9; 
                 border: 1px solid #cbd5e1;
@@ -90,7 +90,7 @@ class StyleManager:
                 border-radius: 8px;
             }
 
-            /* --- VSTUPY A COMBOBOXY --- */
+      
             QComboBox, QDoubleSpinBox, QLineEdit {
                 background-color: #ffffff;
                 border: 1px solid #cbd5e1;
@@ -261,5 +261,51 @@ class StyleManager:
             QSlider::handle:vertical:hover {
                 background: #eff6ff;
                 border: 2px solid #2563eb;
+            }
+
+            /* --- TABULKY (QTableWidget) --- */
+            QTableWidget {
+                background-color: #ffffff;
+                color: #0f172a; /* Vynucená tmavá barva textu v buňkách */
+                gridline-color: #e2e8f0; /* Barva mřížky */
+                border: 1px solid #cbd5e1;
+                border-radius: 6px;
+                outline: none; /* Odstraní tečkovaný rámeček při focusu */
+            }
+            QTableWidget::item {
+                padding: 4px 8px;
+                color: #0f172a; /* Pojistka pro text buněk */
+                border-bottom: 1px solid #f1f5f9;
+            }
+            QTableWidget::item:selected {
+                background-color: #eff6ff; /* Jemná světle modrá pro výběr */
+                color: #1d4ed8; /* Tmavě modrý text pro vybraný řádek */
+                font-weight: 500;
+            }
+            
+            /* --- HLAVIČKY TABULEK (QHeaderView) --- */
+            QHeaderView {
+                background-color: #ffffff;
+                border: none;
+            }
+            QHeaderView::section {
+                background-color: #f8fafc; /* Velmi světle šedá pro hlavičky */
+                color: #475569; /* Tmavě šedá pro text hlavičky */
+                font-weight: bold;
+                padding: 6px 10px;
+                border: none;
+                border-bottom: 2px solid #cbd5e1;
+                border-right: 1px solid #e2e8f0;
+            }
+            QHeaderView::section:last {
+                border-right: none;
+            }
+            
+            /* Levý horní roh tabulky (pokud jsou zobrazená čísla řádků) */
+            QTableCornerButton::section {
+                background-color: #f8fafc;
+                border: none;
+                border-bottom: 2px solid #cbd5e1;
+                border-right: 1px solid #e2e8f0;
             }
         """

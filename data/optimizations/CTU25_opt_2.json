@@ -1,0 +1,173 @@
+{
+    "metadata": {
+        "timestamp": "2026-03-10_18-45-03",
+        "base_vehicle_name": "CTU25",
+        "tracks_used": [
+            "FSG"
+        ],
+        "best_lap_time": 71.20134943210755
+    },
+    "base_car_params": {
+        "acp_capacity": 6.0,
+        "weight": 280.0,
+        "wb": 1.53,
+        "tw": 1.2,
+        "wd": 0.47,
+        "cogz": 0.2,
+        "i": 11.46,
+        "M_max": 30.0,
+        "cd": 1.8,
+        "cd_drs": 1.1,
+        "cl": 5.64,
+        "cl_drs": 4.2,
+        "cop": 0.52,
+        "regen_eff": 0.8,
+        "model_type": "quasi_steady",
+        "energy_limit": null,
+        "drs_allowed": false,
+        "soc_start": 0.77,
+        "name": "CTU25",
+        "mu_x": 1.25,
+        "mu_y": 1.25,
+        "power_max": 80000.0
+    },
+    "best_params": {
+        "cop": 0.42949802759753614,
+        "wb": 1.435008187634855,
+        "tw": 1.1911206887425825,
+        "wd": 0.4773614278453204,
+        "cogz": 0.32971567678904296
+    },
+    "trials": [
+        {
+            "number": 0,
+            "value": 71.20134943210755,
+            "datetime_start": "2026-03-10 18:44:22.235338",
+            "datetime_complete": "2026-03-10 18:44:25.814179",
+            "duration": "0 days 00:00:03.578841",
+            "params_cogz": 0.32971567678904296,
+            "params_cop": 0.42949802759753614,
+            "params_tw": 1.1911206887425825,
+            "params_wb": 1.435008187634855,
+            "params_wd": 0.4773614278453204,
+            "state": "COMPLETE"
+        },
+        {
+            "number": 1,
+            "value": 71.50310948667185,
+            "datetime_start": "2026-03-10 18:44:25.814356",
+            "datetime_complete": "2026-03-10 18:44:29.460626",
+            "duration": "0 days 00:00:03.646270",
+            "params_cogz": 0.21996991315170936,
+            "params_cop": 0.5489492517201164,
+            "params_tw": 1.1836438672045058,
+            "params_wb": 1.6482567885176183,
+            "params_wd": 0.511147960477785,
+            "state": "COMPLETE"
+        },
+        {
+            "number": 2,
+            "value": 72.1189530743582,
+            "datetime_start": "2026-03-10 18:44:29.460843",
+            "datetime_complete": "2026-03-10 18:44:33.061638",
+            "duration": "0 days 00:00:03.600795",
+            "params_cogz": 0.27669826111321616,
+            "params_cop": 0.43645298827344453,
+            "params_tw": 1.3228048185423384,
+            "params_wb": 1.5220081622658341,
+            "params_wd": 0.5357249896627598,
+            "state": "COMPLETE"
+        },
+        {
+            "number": 3,
+            "value": 71.76637150709942,
+            "datetime_start": "2026-03-10 18:44:33.061897",
+            "datetime_complete": "2026-03-10 18:44:36.788745",
+            "duration": "0 days 00:00:03.726848",
+            "params_cogz": 0.3488884136112449,
+            "params_cop": 0.42746349175713094,
+            "params_tw": 1.325356897534787,
+            "params_wb": 1.4875772444580146,
+            "params_wd": 0.5183186814047844,
+            "state": "COMPLETE"
+        },
+        {
+            "number": 4,
+            "value": 71.27080200503424,
+            "datetime_start": "2026-03-10 18:44:36.789031",
+            "datetime_complete": "2026-03-10 18:44:40.496036",
+            "duration": "0 days 00:00:03.707005",
+            "params_cogz": 0.20059667667761805,
+            "params_cop": 0.43331534927341664,
+            "params_tw": 1.3053886489845257,
+            "params_wb": 1.4443994029135176,
+            "params_wd": 0.5429370367170222,
+            "state": "COMPLETE"
+        },
+        {
+            "number": 5,
+            "value": 71.94682325221841,
+            "datetime_start": "2026-03-10 18:44:40.496361",
+            "datetime_complete": "2026-03-10 18:44:44.186440",
+            "duration": "0 days 00:00:03.690079",
+            "params_cogz": 0.32398121777086625,
+            "params_cop": 0.4856523095704782,
+            "params_tw": 1.2314997347953736,
+            "params_wb": 1.641071479403359,
+            "params_wd": 0.48035864825089813,
+            "state": "COMPLETE"
+        },
+        {
+            "number": 6,
+            "value": 71.72561036407396,
+            "datetime_start": "2026-03-10 18:44:44.186866",
+            "datetime_complete": "2026-03-10 18:44:47.911228",
+            "duration": "0 days 00:00:03.724362",
+            "params_cogz": 0.23222994703746438,
+            "params_cop": 0.5469446005828751,
+            "params_tw": 1.1587352870211214,
+            "params_wb": 1.6467468182267102,
+            "params_wd": 0.5221009809071729,
+            "state": "COMPLETE"
+        },
+        {
+            "number": 7,
+            "value": 72.23927072258562,
+            "datetime_start": "2026-03-10 18:44:47.911646",
+            "datetime_complete": "2026-03-10 18:44:51.585835",
+            "duration": "0 days 00:00:03.674189",
+            "params_cogz": 0.30705752929868346,
+            "params_cop": 0.5789097871815043,
+            "params_tw": 1.2887327874320165,
+            "params_wb": 1.467832449343394,
+            "params_wd": 0.4652342629672147,
+            "state": "COMPLETE"
+        },
+        {
+            "number": 8,
+            "value": 72.30450976723073,
+            "datetime_start": "2026-03-10 18:44:51.586296",
+            "datetime_complete": "2026-03-10 18:44:55.286158",
+            "duration": "0 days 00:00:03.699862",
+            "params_cogz": 0.286052624607115,
+            "params_cop": 0.599831506291722,
+            "params_tw": 1.1895663682226743,
+            "params_wb": 1.4339209711418404,
+            "params_wd": 0.4857648268800057,
+            "state": "COMPLETE"
+        },
+        {
+            "number": 9,
+            "value": 71.73984980905321,
+            "datetime_start": "2026-03-10 18:44:55.286667",
+            "datetime_complete": "2026-03-10 18:44:58.944579",
+            "duration": "0 days 00:00:03.657912",
+            "params_cogz": 0.24419321664328011,
+            "params_cop": 0.5491916485561792,
+            "params_tw": 1.3079337079807785,
+            "params_wb": 1.422490222781626,
+            "params_wd": 0.48102100686473276,
+            "state": "COMPLETE"
+        }
+    ]
+}
