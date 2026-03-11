@@ -1,8 +1,10 @@
 import numpy as np
+import json
 import casadi as ca
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, 
                              QSlider, QLabel, QMessageBox, QPushButton, 
-                             QDoubleSpinBox, QTabWidget, QGroupBox, QApplication, QSizePolicy)
+                             QDoubleSpinBox, QTabWidget, QGroupBox, QApplication, QSizePolicy,
+                             QDialog, QTableWidget, QTableWidgetItem, QHeaderView)
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QGuiApplication
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg, NavigationToolbar2QT
@@ -246,6 +248,16 @@ class LaptimeAppMainWindow(QWidget):
         self.btn_deploy.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_deploy.clicked.connect(self.run_deployment)
         
+        self.btn_car_config = QPushButton("Show car config")
+        self.btn_car_config.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_car_config.clicked.connect(self.show_car_config)
+        self.btn_car_config.setStyleSheet("background-color: #64748b;")
+        if hasattr(self, 'car_config') and self.car_config:
+            name = self.car_config.get('name', 'Unknown')
+            self.btn_car_config.setText(f"Car config ({name})")
+        else:
+            self.btn_car_config.setEnabled(False)
+
         # inputs
         lbl_regen = QLabel("Recuperation [%]:")
         lbl_regen.setStyleSheet("font-weight: bold;")
@@ -263,6 +275,7 @@ class LaptimeAppMainWindow(QWidget):
         
         control_layout.addWidget(self.btn_optimize)
         control_layout.addWidget(self.btn_deploy)
+        control_layout.addWidget(self.btn_car_config)
         control_layout.addStretch() 
         control_layout.addWidget(lbl_regen)
         control_layout.addWidget(self.spin_regen)
@@ -299,6 +312,12 @@ class LaptimeAppMainWindow(QWidget):
             e_targets = data['e_targets']
             regen_targets = data['regen_targets']
             flat_lap_times = data['flat_lap_times']
+            
+            if 'car_config' in data:
+                car_json = data['car_config'][0]
+                self.car_config = json.loads(car_json)
+            else:
+                self.car_config = None
             
             shape_3d = (len(soc_targets), len(e_targets), len(regen_targets))
             lap_times_3d = flat_lap_times.reshape(shape_3d)
@@ -377,6 +396,66 @@ class LaptimeAppMainWindow(QWidget):
 
     def stop_loading(self, *args, **kwargs):
         self.loading_overlay.hide_loading()
+
+    def show_car_config(self):
+        if not hasattr(self, 'car_config') or not self.car_config:
+            return
+            
+        dialog = QDialog(self)
+        dialog.setWindowTitle(f"Car Configuration: {self.car_config.get('name', 'Unknown')}")
+        dialog.resize(500, 600)
+        
+        layout = QVBoxLayout(dialog)
+        
+        table = QTableWidget()
+        table.setColumnCount(2)
+        table.setRowCount(len(self.car_config))
+        table.setHorizontalHeaderLabels(["Parameter", "Value"])
+        
+        table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        table.setAlternatingRowColors(True)
+        table.setStyleSheet("""
+            QTableWidget {
+                background-color: #ffffff;
+                alternate-background-color: #f8f9fa;
+                selection-background-color: #e2e8f0;
+                selection-color: #0f172a;
+                border: 1px solid #cbd5e1;
+                border-radius: 4px;
+            }
+            QHeaderView::section {
+                background-color: #f1f5f9;
+                color: #475569;
+                padding: 5px;
+                border: 1px solid #cbd5e1;
+                font-weight: bold;
+            }
+        """)
+
+        for row, (key, value) in enumerate(self.car_config.items()):
+            item_key = QTableWidgetItem(str(key))
+            item_key.setFlags(item_key.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            
+            if isinstance(value, float):
+                val_str = f"{value:.4g}"
+            else:
+                val_str = str(value)
+                
+            item_value = QTableWidgetItem(val_str)
+            item_value.setFlags(item_value.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            
+            table.setItem(row, 0, item_key)
+            table.setItem(row, 1, item_value)
+            
+        layout.addWidget(table)
+        
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(dialog.accept)
+        close_btn.setStyleSheet("background-color: #64748b; color: white; padding: 8px; border-radius: 4px; font-weight: bold;")
+        layout.addWidget(close_btn)
+        
+        dialog.exec()
 
 
 class StrategyResultTab(QWidget):

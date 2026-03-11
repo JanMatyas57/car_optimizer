@@ -362,6 +362,12 @@ class MainWindow(QMainWindow):
         self.btn_optimize.clicked.connect(self.on_optimize_car_clicked)
         layout.addWidget(self.btn_optimize)
 
+        self.btn_sensitivity = QPushButton("Run sensitivity test")
+        self.btn_sensitivity.setObjectName("BtnSensitivity")
+        self.btn_sensitivity.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_sensitivity.clicked.connect(self.on_sensitivity_test_clicked)
+        layout.addWidget(self.btn_sensitivity)
+
         self.btn_endurance_strategy = QPushButton("Endurance strategy")
         self.btn_endurance_strategy.setObjectName("BtnEndurance")
         self.btn_endurance_strategy.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -547,6 +553,11 @@ class MainWindow(QMainWindow):
             
             
             self.controller.handle_request(req)
+
+    def on_sensitivity_test_clicked(self):
+        from src.ui.sensitivity_dialog import SensitivityDialog
+        dialog = SensitivityDialog(self.current_vehicle_name, self.car_params, self)
+        dialog.exec()
 
     def on_compare_clicked(self):
         self.openCompareRequested.emit()

@@ -30,12 +30,14 @@ class LoadingOverlay(QWidget):
         self.lbl_gif = QLabel()
         self.lbl_gif.setAlignment(Qt.AlignmentFlag.AlignCenter)
      
-        gif_path = "data/loading3.gif" 
+        gif_path = "data/loading1.gif" 
         self.movie = QMovie(gif_path)
      
-        self.movie.setScaledSize(QSize(300, 300)) 
+        self.lbl_gif.setFixedSize(300, 300)
+        self.lbl_gif.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        
+        self.movie.frameChanged.connect(self.update_gif_frame)
         self.movie.finished.connect(self.movie.start)
-        self.lbl_gif.setMovie(self.movie)
         
         # text label
         self.lbl_text = QLabel("Calculating...")
@@ -106,6 +108,25 @@ class LoadingOverlay(QWidget):
 
         self.show()
         self.raise_()
+
+    def update_gif_frame(self, frame_number):
+        pixmap = self.movie.currentPixmap()
+        if pixmap.isNull():
+            return
+            
+        ratio = self.devicePixelRatioF()
+        physical_size = int(300 * ratio)
+        
+        # Smoothly scale the frame to the target physical size
+        scaled_pixmap = pixmap.scaled(
+            physical_size, physical_size, 
+            Qt.AspectRatioMode.KeepAspectRatio, 
+            Qt.TransformationMode.SmoothTransformation
+        )
+        
+        # Tell Qt this is a High-DPI pixmap before displaying it
+        scaled_pixmap.setDevicePixelRatio(ratio)
+        self.lbl_gif.setPixmap(scaled_pixmap)
 
     def update_progress(self, current, total):
        

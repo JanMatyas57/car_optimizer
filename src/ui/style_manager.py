@@ -149,7 +149,6 @@ class StyleManager:
             QCheckBox::indicator:hover { border-color: #94a3b8; }
             QCheckBox::indicator:checked { background-color: #3b82f6; border-color: #3b82f6; }
 
-            /* --- OBECNÁ TLAČÍTKA --- */
             QPushButton {
                 font-family: 'Segoe UI', system-ui, sans-serif;
                 font-size: 10pt;
@@ -158,37 +157,102 @@ class StyleManager:
                 padding: 10px 15px;
                 border: none;
                 color: white;
-                background-color: #64748b; 
             }
-            QPushButton:hover { background-color: #475569; }
-            QPushButton:disabled { background-color: #cbd5e1; color: #94a3b8; }
 
-            /* Specifická tlačítka podle ID */
-            QPushButton#BtnConfig { background-color: #475569; }
-            QPushButton#BtnConfig:hover { background-color: #334155; }
-            QPushButton#BtnCreateTrack { background-color: #8b5cf6; }
-            QPushButton#BtnCreateTrack:hover { background-color: #7c3aed; }
-            QPushButton#BtnCompare { background-color: #3b82f6; }
-            QPushButton#BtnCompare:hover { background-color: #2563eb; }
-            QPushButton#BtnRunSingle { background-color: #10b981; }
-            QPushButton#BtnRunSingle:hover { background-color: #059669; }
-            QPushButton#BtnEndurance { background-color: #06b6d4; }
-            QPushButton#BtnEndurance:hover { background-color: #0891b2; }
-            QPushButton#BtnLapMap { background-color: #64748b; }
-            QPushButton#BtnLapMap:hover { background-color: #475569; }
-            QPushButton#BtnOptimize { background-color: #0c43e8; }
-            QPushButton#BtnOptimize:hover { background-color: #20059c; }
-            
-            QPushButton#BtnTool {
-                background-color: #e2e8f0;
-                color: #334155;
-                font-weight: bold;
-                font-size: 14pt;
-                border-radius: 5px;
-                border: 1px solid #cbd5e1;
-                padding: 5px;
+            /* Default */
+            QPushButton {
+                background-color: #64748B;
             }
-            QPushButton#BtnTool:hover { background-color: #cbd5e1; }
+            QPushButton:hover {
+                background-color: #475569;
+            }
+
+            QPushButton:disabled {
+                background-color: #CBD5E1;
+                color: #94A3B8;
+            }
+
+            /* Config (neutral) */
+            QPushButton#BtnConfig {
+                background-color: #475569;
+            }
+            QPushButton#BtnConfig:hover {
+                background-color: #334155;
+            }
+
+            /* Track creation (creative action) */
+            QPushButton#BtnCreateTrack {
+                background-color: #6366F1;
+            }
+            QPushButton#BtnCreateTrack:hover {
+                background-color: #4F46E5;
+            }
+
+            /* Compare (analysis) */
+            QPushButton#BtnCompare {
+                background-color: #3B82F6;
+            }
+            QPushButton#BtnCompare:hover {
+                background-color: #2563EB;
+            }
+
+            /* Run simulation */
+            QPushButton#BtnRunSingle {
+                background-color: #10B981;
+            }
+            QPushButton#BtnRunSingle:hover {
+                background-color: #059669;
+            }
+
+            /* Endurance run */
+            QPushButton#BtnEndurance {
+                background-color: #0EA5A4;
+            }
+            QPushButton#BtnEndurance:hover {
+                background-color: #0F766E;
+            }
+
+            /* Map utility */
+            QPushButton#BtnLapMap {
+                background-color: #64748B;
+            }
+            QPushButton#BtnLapMap:hover {
+                background-color: #475569;
+            }
+
+            /* Heavy computation */
+            QPushButton#BtnOptimize {
+                background-color: #3B82F6;
+            }
+            QPushButton#BtnOptimize:hover {
+                background-color: #2563EB;
+            }
+
+            /* Sensitivity analysis */
+            QPushButton#BtnSensitivity {
+                background-color: #4F46E5;
+            }
+            QPushButton#BtnSensitivity:hover {
+                background-color: #4338CA;
+            }
+
+            /* Tool buttons */
+            QPushButton#BtnTool {
+                background-color: #F1F5F9;
+                color: #334155;
+                font-weight: 600;
+                font-size: 12pt;
+                border-radius: 6px;
+                border: 1px solid #CBD5E1;
+                padding: 6px;
+            }
+
+            QPushButton#BtnTool:hover {
+                background-color: #E2E8F0;
+            }
+
+         
+            
 
             /* --- DIALOGY A SCROLLBARY --- */
             QMessageBox, QInputDialog { background-color: #f1f5f9; }

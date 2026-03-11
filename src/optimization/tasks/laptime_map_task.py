@@ -1,6 +1,8 @@
 import os
 import time
 import numpy as np
+import json
+from dataclasses import asdict
 from scipy.interpolate import griddata
 from src.optimization.solvers.base_solver import InitConditions
 from .base_task import SimulationTask, SolverPayload
@@ -16,10 +18,10 @@ class LaptimeMapTask(SimulationTask):
     def execute(self, progress_callback) -> SolverPayload:
         start = time.time()
         
-        acp_targets = np.linspace(3.5, 9.0, num=15, endpoint=True)
+        acp_targets = np.linspace(3.5, 9.0, num=4, endpoint=True)
         e_targets = np.round(acp_targets / self.laps, 2)
-        regen_targets = np.linspace(0.0, 1.1, num=15, endpoint=True)
-        soc_targets = np.linspace(0.1, 1.05, num=15, endpoint=True)
+        regen_targets = np.linspace(0.0, 1.1, num=4, endpoint=True)
+        soc_targets = np.linspace(0.1, 1.05, num=4, endpoint=True)
 
         total_steps = len(e_targets) * len(regen_targets) * len(soc_targets)
         results_log = []
@@ -82,7 +84,12 @@ class LaptimeMapTask(SimulationTask):
 
         save_dir = os.path.join("data", "tracks", "lapmaps")
         os.makedirs(save_dir, exist_ok=True)
-        file_path = os.path.join(save_dir, f"laptime_map_{self.track.name}.npz")
+        file_path = os.path.join(save_dir, f"{self.track.name}_laptime_map.npz")
+
+        # Extract car config as json string (selected parameters only)
+        allowed_keys = ["name", "weight", "cd", "cl", "acp_capacity", "drs_allowed", "power_max"]
+        car_dict = {k: getattr(self.car, k) for k in allowed_keys if hasattr(self.car, k)}
+        car_json = json.dumps(car_dict)
 
         np.savez_compressed(
             file_path,
@@ -91,7 +98,8 @@ class LaptimeMapTask(SimulationTask):
             regen_targets=np.array(regen_targets),
             flat_lap_times=np.array(flat_lap_times), 
             laps=np.array(self.laps),
-            acp_capacity=np.array(self.car.acp_capacity)
+            acp_capacity=np.array(self.car.acp_capacity),
+            car_config=np.array([car_json])
         )
 
         return SolverPayload(

@@ -58,7 +58,8 @@ class SimulationController(QObject):
 
             elif isinstance(req, LapMapTestRequest):
                 track = Track.load(req.track_name)
-                solver = self._create_solver(car, track, laps=req.laps)
+                #we use strictly the mass point solver since it can limit energy
+                solver = MassPointSolver(car, track)
                 task = LaptimeMapTask(solver, car, track, req.ds, req.laps)
 
             elif isinstance(req, TrackGenerationRequest):
