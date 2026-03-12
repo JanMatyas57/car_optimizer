@@ -15,7 +15,7 @@ from sklearn.preprocessing import StandardScaler
 
 from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QGroupBox, 
                              QLabel, QPushButton, QTabWidget, QWidget, QComboBox, 
-                             QSlider, QFileDialog, QMessageBox)
+                             QSlider, QFileDialog, QMessageBox, QScrollArea)
 from PyQt6.QtCore import Qt
 
 class OptimizationResultsDialog(QDialog):
@@ -33,7 +33,11 @@ class OptimizationResultsDialog(QDialog):
         pg.setConfigOptions(antialias=True)
         
         self.setWindowTitle("Optimization results")
-        self.resize(1100, 850)
+        
+        # Match height to 95% of screen available height to account for window decorations/taskbar safely
+        screen_geo = self.screen().availableGeometry()
+        w, h = 1000, max(600, int(screen_geo.height() * 0.95))
+        self.setGeometry((screen_geo.width() - w) // 2, screen_geo.y() + (screen_geo.height() - h) // 2, w, h)
        
         self.setStyleSheet("""
             QDialog {
@@ -276,6 +280,7 @@ class OptimizationResultsDialog(QDialog):
         self.combo_x = QComboBox()
         self.combo_x.addItems(self.param_names)
         self.combo_x.currentIndexChanged.connect(self.update_analysis_plot)
+        self.combo_x.currentIndexChanged.connect(self.update_sensitivity_plot)
         
         header = QHBoxLayout()
         header.addWidget(QLabel("<b>X-Axis parameter:</b>"))
@@ -303,8 +308,15 @@ class OptimizationResultsDialog(QDialog):
         self.sliders = {}
         self.slider_labels = {}
         
+        self.sens_group = QGroupBox("Sensitivity evaluation point")
+        self.sens_layout = QVBoxLayout(self.sens_group)
+        self.sens_sliders = {}
+        self.sens_labels = {}
+        
         for p_name in self.param_names:
             p_min, p_max = self.df[f"params_{p_name}"].min(), self.df[f"params_{p_name}"].max()
+            
+            # Slice Filter
             p_layout = QVBoxLayout()
             lbl = QLabel(f"<b>{p_name}</b>")
             val_lbl = QLabel(f"Range: {p_min:.3f} - {p_max:.3f}")
@@ -317,10 +329,43 @@ class OptimizationResultsDialog(QDialog):
             self.filter_layout.addLayout(p_layout)
             self.sliders[p_name] = slider; self.slider_labels[p_name] = val_lbl
 
+            # Sensitivity Point
+            s_layout = QVBoxLayout()
+            s_lbl = QLabel(f"<b>{p_name}</b>")
+            s_val_lbl = QLabel(f"Value: - (Sens: -)")
+            
+            s_slider = QSlider(Qt.Orientation.Horizontal)
+            s_slider.setRange(0, 100); s_slider.setValue(50)
+            s_slider.valueChanged.connect(self.update_sensitivity_plot)
+            
+            s_layout.addWidget(s_lbl); s_layout.addWidget(s_slider); s_layout.addWidget(s_val_lbl)
+            self.sens_layout.addLayout(s_layout)
+            self.sens_sliders[p_name] = s_slider; self.sens_labels[p_name] = s_val_lbl
+
         self.filter_layout.addStretch()
-        main_layout.addWidget(self.filter_group, stretch=1)
+        self.sens_layout.addStretch()
+        
+        sidebar_widget = QWidget()
+        sidebar_widget.setObjectName("sidebar_widget")
+        sidebar_layout = QVBoxLayout(sidebar_widget)
+        sidebar_layout.addWidget(self.filter_group)
+        sidebar_layout.addWidget(self.sens_group)
+        
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setWidget(sidebar_widget)
+        # Remove scroll area border and ensure white background everywhere inside
+        scroll_area.setStyleSheet("""
+            QScrollArea { border: none; background-color: #ffffff; }
+            QWidget#qt_scrollarea_viewport { background-color: #ffffff; }
+            QWidget#sidebar_widget { background-color: #ffffff; }
+        """)
+        
+        main_layout.addWidget(scroll_area, stretch=1)
+        
         self.tabs.addTab(widget, "Dynamic slice")
         self.update_analysis_plot()
+        self.update_sensitivity_plot()
 
     def update_analysis_plot(self):
         x_name = self.combo_x.currentText()
@@ -379,6 +424,7 @@ class OptimizationResultsDialog(QDialog):
                 
                 self.gp_mean_curve.show()
                 self.gp_fill.show()
+                
             except Exception as e:
                 print(f"GP prediction failed: {e}")
                 self.gp_mean_curve.hide()
@@ -388,6 +434,79 @@ class OptimizationResultsDialog(QDialog):
             self.gp_fill.hide()
 
         self._style_plot(self.plot_slice, f"Slice: {x_name} (Showing {len(filtered_df)} trials)", "Lap Time", x_name, "s")
+
+    def update_sensitivity_plot(self):
+        if not getattr(self, 'gp_fitted', False):
+            return
+
+        x_name = self.combo_x.currentText()
+        if not x_name: return
+
+        # Construct N-dimensional evaluation point
+        X_eval = np.zeros((1, len(self.param_cols)))
+        for i, p_name in enumerate(self.param_names):
+            slider = self.sens_sliders[p_name]
+            p_col = f"params_{p_name}"
+            p_min_s, p_max_s = self.df[p_col].min(), self.df[p_col].max()
+            target_val = p_min_s + (slider.value() / 100.0) * (p_max_s - p_min_s)
+            X_eval[0, i] = target_val
+
+        # Calculate sensitivities
+        sensitivities = self._calculate_sensitivities(X_eval)
+        
+        # Update labels
+        if sensitivities is not None:
+            for i, p_name in enumerate(self.param_names):
+                slider = self.sens_sliders[p_name]
+                p_col = f"params_{p_name}"
+                p_min_s, p_max_s = self.df[p_col].min(), self.df[p_col].max()
+                target_val = p_min_s + (slider.value() / 100.0) * (p_max_s - p_min_s)
+                
+                if p_name != x_name:
+                    self.sens_labels[p_name].setText(f"Value: ~{target_val:.3f}   (Sens: {sensitivities[i]:+.3f} s/unit)")
+                else:
+                    self.sens_labels[p_name].setText(f"<b>[X-Axis]</b> Value: ~{target_val:.3f}   (Sens: {sensitivities[i]:+.3f} s/unit)")
+
+    def _calculate_sensitivities(self, X_eval):
+        """Calculates physical sensitivities analytically for the GP at X_eval (shape 1, D)"""
+        if not getattr(self, 'gp_fitted', False):
+            return None
+            
+        try:
+            x_test_scaled = self.scaler.transform(X_eval)
+            
+            # Extract matern kernel and parameters
+            matern_kernel = self.gp.kernel_.k1
+            length_scale = matern_kernel.length_scale
+            if isinstance(length_scale, float):
+                length_scale = np.array([length_scale] * len(self.param_cols))
+                
+            X_train_scaled = self.gp.X_train_
+            diff = x_test_scaled - X_train_scaled # shape (N, D)
+            
+            dist_sq = np.sum((diff / length_scale)**2, axis=1)
+            r = np.sqrt(dist_sq)
+            
+            dk_dx_scaled = np.zeros((X_train_scaled.shape[0], len(self.param_cols)))
+            sqrt5_r = np.sqrt(5) * r
+            mask = r > 0
+            coef = -(5.0 / 3.0) * (1.0 + sqrt5_r[mask]) * np.exp(-sqrt5_r[mask])
+            
+            for d in range(len(self.param_cols)):
+                dk_dx_scaled[mask, d] = coef * diff[mask, d] / (length_scale[d]**2)
+                
+            alpha = self.gp.alpha_
+            grad_scaled = np.dot(alpha, dk_dx_scaled) # shape (D,)
+            
+            y_std = self.gp._y_train_std
+            x_scale = self.scaler.scale_
+            
+            grad_analytical = grad_scaled * y_std / x_scale
+            return grad_analytical
+            
+        except Exception as e:
+            print(f"Sensitivity calculation failed: {e}")
+            return None
 
     def init_importance_tab(self):
         widget = QWidget()

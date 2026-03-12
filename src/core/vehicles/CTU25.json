@@ -14,7 +14,7 @@
     "cop": 0.52,
     "power_limit": 80.0,
     "regen_eff": 0.0,
-    "laps": 22,
+    "laps": 18,
     "ds": 1.0,
     "model_type": "mass_point_rk4",
     "energy_limit": null,

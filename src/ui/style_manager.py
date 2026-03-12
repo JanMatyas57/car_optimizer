@@ -267,6 +267,11 @@ class StyleManager:
             QScrollBar::handle:vertical { background-color: #cbd5e1; min-height: 30px; border-radius: 4px; }
             QScrollBar::handle:vertical:hover { background-color: #94a3b8; }
             QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical, QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { border: none; background: none; }
+            
+            QScrollBar:horizontal { border: none; background-color: #f1f5f9; height: 8px; border-radius: 4px; margin: 0px; }
+            QScrollBar::handle:horizontal { background-color: #cbd5e1; min-width: 30px; border-radius: 4px; }
+            QScrollBar::handle:horizontal:hover { background-color: #94a3b8; }
+            QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal, QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal { border: none; background: none; }
             QSplitter::handle { background-color: transparent; }
 
             /* Vynutí, aby samotný obsah záložky byl vždy čistě bílý */
