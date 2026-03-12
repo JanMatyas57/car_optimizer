@@ -114,6 +114,10 @@ class ComparisonPlotWindow(QWidget):
         self.init_energy_tab()
         self.init_map_tab()
         self.init_parameters_tab()
+        self.init_soc_tab()
+        
+        self.setWindowState(Qt.WindowState.WindowMaximized)
+
         
     def load_data(self):
         self.runs = []
@@ -143,6 +147,10 @@ class ComparisonPlotWindow(QWidget):
                 else:
                     car_dict = {"Data status": "No car parameters saved"}
 
+                soc_data = data['SoC'] if 'SoC' in data else None
+                if soc_data is not None and getattr(soc_data, 'size', 1) == 0:
+                    soc_data = None
+                
                 run_dict = {
                     's': data['s'],
                     'v': data['v'],
@@ -152,6 +160,8 @@ class ComparisonPlotWindow(QWidget):
                     'y': data['y'], 
                     'f_acc': data['f_acc'],
                     'f_brake': data['f_brake'],
+                    'recuperation': data['recuperation'] if 'recuperation' in data and getattr(data['recuperation'], 'size', 1) > 0 else np.zeros_like(data['s']),
+                    'SoC': soc_data,
                     'time': float(data['lap_time']),
                     'name': item['legend'],
                     'car_dict': car_dict  # <-- now contains either json or error message
@@ -254,8 +264,8 @@ class ComparisonPlotWindow(QWidget):
         layout.setSpacing(15)
         
         plot_p = pg.PlotWidget()
-        self._style_plot(plot_p, "Powertrain Power", "Power", "kW")
-        legend = plot_p.addLegend(offset=(20, 20), pen=pg.mkPen('#e2e8f0'), brush=pg.mkBrush('#ffffffEE'))
+        self._style_plot(plot_p, "Powertrain power", "Power", "kW")
+        legend = plot_p.addLegend(offset=(20, 20), pen=pg.mkPen('#e2e8f0'), brush=pg.mkBrush('#ffffffEE'), columnCount=3)
         legend.setLabelTextColor('#0f172a')
         
         plot_e = pg.PlotWidget()
@@ -269,12 +279,25 @@ class ComparisonPlotWindow(QWidget):
             
             # power calc
             min_len = min(len(run['f_acc']), len(run['v']))
-            f_tot = run['f_acc'][:min_len] + run['f_brake'][:min_len]
             v = run['v'][:min_len]
-            pwr = (f_tot * v) / 1000.0
+            
+            pwr_traction = (run['f_acc'][:min_len] * v) / 1000.0
+            pwr_brake = (run['f_brake'][:min_len] * v) / 1000.0
+            
+            if 'recuperation' in run and run['recuperation'] is not None:
+                p_regen = -(run['recuperation'][:min_len] / 1000.0)
+            else:
+                p_regen = np.zeros_like(v)
+                
             s_axis = run['s'][:min_len]
             
-            plot_p.plot(s_axis, pwr, pen=pg.mkPen(color_val, width=width), name=f"({run['time']:.3f}s)")
+            pen_trac = pg.mkPen(color_val, width=width)
+            pen_brk = pg.mkPen(color_val, width=width, style=Qt.PenStyle.DashLine)
+            pen_reg = pg.mkPen(color_val, width=width, style=Qt.PenStyle.DotLine)
+            
+            plot_p.plot(s_axis, pwr_traction, pen=pen_trac, name=f"Trac ({run['time']:.3f}s)")
+            plot_p.plot(s_axis, pwr_brake, pen=pen_brk, name=f"Brk ({run['time']:.3f}s)")
+            plot_p.plot(s_axis, p_regen, pen=pen_reg, name=f"Regen ({run['time']:.3f}s)")
             
             # energy - fill under curve for better readability
             e_curve = plot_e.plot(run['s'], run['E']-run['E'][0], pen=pg.mkPen(color_val, width=width), name=f"({run['time']:.3f}s)")
@@ -467,3 +490,36 @@ class ComparisonPlotWindow(QWidget):
             layout.addWidget(run_container)
             
         self.tabs.addTab(widget, "Car Configs")
+
+    def init_soc_tab(self):
+        # Only create this tab if at least one run has SoC data
+        if all(run.get('SoC') is None for run in self.runs):
+            return
+            
+        widget = QWidget()
+        layout = QVBoxLayout()
+        layout.setContentsMargins(15, 15, 15, 15)
+        
+        plot_soc = pg.PlotWidget()
+        self._style_plot(plot_soc, "Battery state of charge", "SoC", "%")
+        legend = plot_soc.addLegend(offset=(20, 20), pen=pg.mkPen('#e2e8f0'), brush=pg.mkBrush('#ffffffEE'))
+        legend.setLabelTextColor('#0f172a')
+
+        for i, run in enumerate(self.runs):
+            if run.get('SoC') is not None:
+                color_hex = self.PALETTE[i % len(self.PALETTE)]
+                color_val = pg.mkColor(color_hex)
+                width = 2.5 if run is self.ref_run else 2.0
+                
+                s_plot = run['s'][:len(run['SoC'])]
+                soc_curve = plot_soc.plot(s_plot, run['SoC'], pen=pg.mkPen(color_val, width=width), name=f"({run['time']:.3f}s)")
+                
+                if run is self.ref_run:
+                    dummy_zero = pg.PlotCurveItem(s_plot, np.zeros_like(s_plot), pen=None)
+                    fill_color = pg.mkColor(color_hex)
+                    fill_color.setAlpha(30)
+                    plot_soc.addItem(pg.FillBetweenItem(soc_curve, dummy_zero, brush=fill_color))
+
+        layout.addWidget(plot_soc)
+        widget.setLayout(layout)
+        self.tabs.addTab(widget, "Battery")

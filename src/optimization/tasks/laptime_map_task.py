@@ -18,10 +18,10 @@ class LaptimeMapTask(SimulationTask):
     def execute(self, progress_callback) -> SolverPayload:
         start = time.time()
         
-        acp_targets = np.linspace(3.5, 9.0, num=4, endpoint=True)
+        acp_targets = np.linspace(3.5, 9.0, num=10, endpoint=True)
         e_targets = np.round(acp_targets / self.laps, 2)
-        regen_targets = np.linspace(0.0, 1.1, num=4, endpoint=True)
-        soc_targets = np.linspace(0.1, 1.05, num=4, endpoint=True)
+        regen_targets = np.linspace(0.0, 1.1, num=10, endpoint=True)
+        soc_targets = np.linspace(0.1, 1.05, num=10, endpoint=True)
 
         total_steps = len(e_targets) * len(regen_targets) * len(soc_targets)
         results_log = []

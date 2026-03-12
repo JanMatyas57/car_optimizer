@@ -9,6 +9,10 @@ try:
 except ImportError:
     pass
 
+from sklearn.gaussian_process import GaussianProcessRegressor
+from sklearn.gaussian_process.kernels import Matern, WhiteKernel
+from sklearn.preprocessing import StandardScaler
+
 from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QGroupBox, 
                              QLabel, QPushButton, QTabWidget, QWidget, QComboBox, 
                              QSlider, QFileDialog, QMessageBox)
@@ -142,6 +146,26 @@ class OptimizationResultsDialog(QDialog):
         self.y_min = self.df['value'].min()
         self.y_max = self.df['value'].max()
 
+        # Fit Gaussian Process
+        if len(self.df) > 0 and len(self.param_cols) > 0:
+            X = self.df[self.param_cols].values
+            y = self.df['value'].values
+            
+            self.scaler = StandardScaler()
+            X_scaled = self.scaler.fit_transform(X)
+            
+            # Simple GP kernel covering most parameter behavior combinations
+            kernel = Matern(nu=2.5) + WhiteKernel(noise_level=1)
+            self.gp = GaussianProcessRegressor(kernel=kernel, n_restarts_optimizer=5, normalize_y=True)
+            try:
+                self.gp.fit(X_scaled, y)
+                self.gp_fitted = True
+            except Exception as e:
+                print(f"Warning: GP fitting failed: {e}")
+                self.gp_fitted = False
+        else:
+            self.gp_fitted = False
+
     def _style_plot(self, plot, title, y_label, x_label, units=None):
         plot.setBackground("#FFFFFF")
         plot.setTitle(title, color='#0f172a', size='12pt', bold=True)
@@ -260,7 +284,16 @@ class OptimizationResultsDialog(QDialog):
         plot_layout.addLayout(header)
         
         self.plot_slice = pg.PlotWidget()
+        
+        self.gp_mean_curve = pg.PlotDataItem(pen=pg.mkPen('#e11d48', width=2, style=Qt.PenStyle.DashLine))
+        self.gp_upper_curve = pg.PlotDataItem(pen=pg.mkPen(None))
+        self.gp_lower_curve = pg.PlotDataItem(pen=pg.mkPen(None))
+        self.gp_fill = pg.FillBetweenItem(self.gp_lower_curve, self.gp_upper_curve, brush=pg.mkBrush('#cffdff'))
+        
         self.slice_scatter = pg.ScatterPlotItem(size=12, pen=pg.mkPen('#ffffff', width=0.5), brush=pg.mkBrush(self.C_SIM + 'AA'))
+        
+        self.plot_slice.addItem(self.gp_fill)
+        self.plot_slice.addItem(self.gp_mean_curve)
         self.plot_slice.addItem(self.slice_scatter)
         plot_layout.addWidget(self.plot_slice)
         main_layout.addLayout(plot_layout, stretch=3)
@@ -319,6 +352,41 @@ class OptimizationResultsDialog(QDialog):
 
         filtered_df = self.df[mask]
         self.slice_scatter.setData(x=filtered_df[p_col_x].values, y=filtered_df['value'].values)
+        
+        # Update GP curve for current slice
+        if getattr(self, 'gp_fitted', False):
+            n_points = 100
+            x_grid = np.linspace(x_min - x_margin, x_max + x_margin, n_points)
+            
+            X_pred = np.zeros((n_points, len(self.param_cols)))
+            for i, p_name in enumerate(self.param_names):
+                if p_name == x_name:
+                    X_pred[:, i] = x_grid
+                else:
+                    slider = self.sliders[p_name]
+                    p_col = f"params_{p_name}"
+                    p_min_s, p_max_s = self.df[p_col].min(), self.df[p_col].max()
+                    target_val = p_min_s + (slider.value() / 100.0) * (p_max_s - p_min_s)
+                    X_pred[:, i] = target_val
+                    
+            try:
+                X_pred_scaled = self.scaler.transform(X_pred)
+                y_mean, y_std = self.gp.predict(X_pred_scaled, return_std=True)
+                
+                self.gp_mean_curve.setData(x=x_grid, y=y_mean)
+                self.gp_upper_curve.setData(x=x_grid, y=y_mean + 1.96 * y_std)
+                self.gp_lower_curve.setData(x=x_grid, y=y_mean - 1.96 * y_std)
+                
+                self.gp_mean_curve.show()
+                self.gp_fill.show()
+            except Exception as e:
+                print(f"GP prediction failed: {e}")
+                self.gp_mean_curve.hide()
+                self.gp_fill.hide()
+        else:
+            self.gp_mean_curve.hide()
+            self.gp_fill.hide()
+
         self._style_plot(self.plot_slice, f"Slice: {x_name} (Showing {len(filtered_df)} trials)", "Lap Time", x_name, "s")
 
     def init_importance_tab(self):

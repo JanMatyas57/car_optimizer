@@ -325,7 +325,7 @@ class LaptimeAppMainWindow(QWidget):
             # outlier filter
             smoothed_3d = median_filter(lap_times_3d, size=3)
             diff = np.abs(lap_times_3d - smoothed_3d)
-            outliers_mask = diff > 5.0
+            outliers_mask = diff > 5.0 #
             num_outliers = np.sum(outliers_mask)
             
             if num_outliers > 0:

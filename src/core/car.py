@@ -35,7 +35,7 @@ class Car:
     g = 9.81
 
     # Powertrain
-    brake_max = 100000
+    brake_max = 80000
     power_eff = 0.88
     fix_drag = 230
     wheel_radius = 0.205

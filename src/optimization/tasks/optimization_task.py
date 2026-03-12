@@ -24,7 +24,7 @@ class OptimizationTask(SimulationTask):
         self.vehicle_name = vehicle_name
         self.bounds = bounds
        
-        self.n_trials = 10
+        self.n_trials = 100
         
         self.loaded_tracks = [Track.load(t_name) for t_name in tracks]
 

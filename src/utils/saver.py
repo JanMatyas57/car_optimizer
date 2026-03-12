@@ -47,6 +47,8 @@ def save_results_to_npz(filepath, res, track, ds, car=None):
         E=res.E,
         f_acc=res.f_acc,
         f_brake=res.f_brake,
+        recuperation=getattr(res, 'recuperation', np.array([])),
+        SoC=getattr(res, 'SoC', np.array([])),
         
         # scalar values
         lap_time=res.lap_time,

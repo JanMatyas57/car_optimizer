@@ -2,6 +2,9 @@
 - architecure.md
 - main.py
 - pack.py
+- data\optimizations\CTU25_opt.json
+- data\optimizations\CTU25_opt_2.json
+- data\optimizations\CTU25_opt_2026-03-10_20-05-24.json
 - src\core\car.py
 - src\core\pacejka94.txt
 - src\core\track.py
@@ -25,6 +28,7 @@
 - src\optimization\solvers\__init__.py
 - src\optimization\tasks\base_task.py
 - src\optimization\tasks\laptime_map_task.py
+- src\optimization\tasks\optimization_task.py
 - src\optimization\tasks\single_lap.py
 - src\optimization\tasks\strategy.py
 - src\optimization\tasks\track_generation_task.py
@@ -33,10 +37,13 @@
 - src\ui\endurance_results.py
 - src\ui\endurance_strategy.py
 - src\ui\loader.py
+- src\ui\load_optimization_dialog.py
 - src\ui\main_window.py
 - src\ui\optimization_dialog.py
+- src\ui\optimization_results_dialog.py
 - src\ui\results_tab.py
 - src\ui\results_window.py
+- src\ui\sensitivity_dialog.py
 - src\ui\style_manager.py
 - src\ui\track_generator_dialog.py
 - src\ui\track_tools.py
@@ -218,6 +225,7 @@ from src.ui.style_manager import StyleManager
 from src.handlers.controller import SimulationController
 from src.optimization.work_thread import SimulationWorker
 from src.handlers.requests import StrategyOptRequest, DeploymentOptRequest
+from src.ui.optimization_results_dialog import OptimizationResultsDialog
 
 class SimulationApp:
     def __init__(self):
@@ -337,6 +345,10 @@ class SimulationApp:
                 if isinstance(win, LaptimeAppMainWindow):
                     win.add_result_tab(payload)
                     break
+
+        elif kind == "optimization":
+            win = OptimizationResultsDialog(payload=data, parent=self.main_window)
+            win.show()
                 
         elif kind == "track_generation":
             # route the smoothed track data back to main window to finish the DRS / Save process
@@ -432,6 +444,497 @@ if __name__ == "__main__":
     pack_project()
   
 --- KONEC SOUBORU: pack.py ---
+
+--- ZAČÁTEK SOUBORU: data\optimizations\CTU25_opt.json ---
+{
+    "metadata": {
+        "timestamp": "2026-03-10_18-42-47",
+        "base_vehicle_name": "CTU25",
+        "tracks_used": [
+            "FSG"
+        ],
+        "best_lap_time": 71.05571474021295
+    },
+    "base_car_params": {
+        "acp_capacity": 6.0,
+        "weight": 280.0,
+        "wb": 1.53,
+        "tw": 1.2,
+        "wd": 0.47,
+        "cogz": 0.2,
+        "i": 11.46,
+        "M_max": 30.0,
+        "cd": 1.8,
+        "cd_drs": 1.1,
+        "cl": 5.64,
+        "cl_drs": 4.2,
+        "cop": 0.52,
+        "regen_eff": 0.8,
+        "model_type": "quasi_steady",
+        "energy_limit": null,
+        "drs_allowed": false,
+        "soc_start": 0.77,
+        "name": "CTU25",
+        "mu_x": 1.25,
+        "mu_y": 1.25,
+        "power_max": 80000.0
+    },
+    "best_params": {
+        "wd": 0.45350959891355724
+    },
+    "trials": [
+        {
+            "number": 0,
+            "value": 71.2830975445813,
+            "datetime_start": "2026-03-10 18:42:03.000478",
+            "datetime_complete": "2026-03-10 18:42:06.481569",
+            "duration": "0 days 00:00:03.481091",
+            "params_wd": 0.5179175993462906,
+            "state": "COMPLETE"
+        },
+        {
+            "number": 1,
+            "value": 71.05571474021295,
+            "datetime_start": "2026-03-10 18:42:06.481733",
+            "datetime_complete": "2026-03-10 18:42:09.947820",
+            "duration": "0 days 00:00:03.466087",
+            "params_wd": 0.45350959891355724,
+            "state": "COMPLETE"
+        },
+        {
+            "number": 2,
+            "value": 71.13680272175517,
+            "datetime_start": "2026-03-10 18:42:09.948049",
+            "datetime_complete": "2026-03-10 18:42:13.484046",
+            "duration": "0 days 00:00:03.535997",
+            "params_wd": 0.48538078596690887,
+            "state": "COMPLETE"
+        },
+        {
+            "number": 3,
+            "value": 71.10959458943623,
+            "datetime_start": "2026-03-10 18:42:13.484244",
+            "datetime_complete": "2026-03-10 18:42:16.966385",
+            "duration": "0 days 00:00:03.482141",
+            "params_wd": 0.46727279385142007,
+            "state": "COMPLETE"
+        },
+        {
+            "number": 4,
+            "value": 71.07807165710634,
+            "datetime_start": "2026-03-10 18:42:16.966623",
+            "datetime_complete": "2026-03-10 18:42:20.485818",
+            "duration": "0 days 00:00:03.519195",
+            "params_wd": 0.4698178507240339,
+            "state": "COMPLETE"
+        },
+        {
+            "number": 5,
+            "value": 71.11082670206143,
+            "datetime_start": "2026-03-10 18:42:20.486020",
+            "datetime_complete": "2026-03-10 18:42:24.039543",
+            "duration": "0 days 00:00:03.553523",
+            "params_wd": 0.4784022379387026,
+            "state": "COMPLETE"
+        },
+        {
+            "number": 6,
+            "value": 71.1774190447579,
+            "datetime_start": "2026-03-10 18:42:24.039831",
+            "datetime_complete": "2026-03-10 18:42:27.616267",
+            "duration": "0 days 00:00:03.576436",
+            "params_wd": 0.4952422607984708,
+            "state": "COMPLETE"
+        },
+        {
+            "number": 7,
+            "value": 71.27707283924948,
+            "datetime_start": "2026-03-10 18:42:27.616521",
+            "datetime_complete": "2026-03-10 18:42:31.258354",
+            "duration": "0 days 00:00:03.641833",
+            "params_wd": 0.5165773908550854,
+            "state": "COMPLETE"
+        },
+        {
+            "number": 8,
+            "value": 71.15316810102883,
+            "datetime_start": "2026-03-10 18:42:31.258616",
+            "datetime_complete": "2026-03-10 18:42:34.832725",
+            "duration": "0 days 00:00:03.574109",
+            "params_wd": 0.4895244484313714,
+            "state": "COMPLETE"
+        },
+        {
+            "number": 9,
+            "value": 71.12664557306,
+            "datetime_start": "2026-03-10 18:42:34.833011",
+            "datetime_complete": "2026-03-10 18:42:38.491305",
+            "duration": "0 days 00:00:03.658294",
+            "params_wd": 0.4826999551523819,
+            "state": "COMPLETE"
+        }
+    ]
+}
+--- KONEC SOUBORU: data\optimizations\CTU25_opt.json ---
+
+--- ZAČÁTEK SOUBORU: data\optimizations\CTU25_opt_2.json ---
+{
+    "metadata": {
+        "timestamp": "2026-03-10_18-45-03",
+        "base_vehicle_name": "CTU25",
+        "tracks_used": [
+            "FSG"
+        ],
+        "best_lap_time": 71.20134943210755
+    },
+    "base_car_params": {
+        "acp_capacity": 6.0,
+        "weight": 280.0,
+        "wb": 1.53,
+        "tw": 1.2,
+        "wd": 0.47,
+        "cogz": 0.2,
+        "i": 11.46,
+        "M_max": 30.0,
+        "cd": 1.8,
+        "cd_drs": 1.1,
+        "cl": 5.64,
+        "cl_drs": 4.2,
+        "cop": 0.52,
+        "regen_eff": 0.8,
+        "model_type": "quasi_steady",
+        "energy_limit": null,
+        "drs_allowed": false,
+        "soc_start": 0.77,
+        "name": "CTU25",
+        "mu_x": 1.25,
+        "mu_y": 1.25,
+        "power_max": 80000.0
+    },
+    "best_params": {
+        "cop": 0.42949802759753614,
+        "wb": 1.435008187634855,
+        "tw": 1.1911206887425825,
+        "wd": 0.4773614278453204,
+        "cogz": 0.32971567678904296
+    },
+    "trials": [
+        {
+            "number": 0,
+            "value": 71.20134943210755,
+            "datetime_start": "2026-03-10 18:44:22.235338",
+            "datetime_complete": "2026-03-10 18:44:25.814179",
+            "duration": "0 days 00:00:03.578841",
+            "params_cogz": 0.32971567678904296,
+            "params_cop": 0.42949802759753614,
+            "params_tw": 1.1911206887425825,
+            "params_wb": 1.435008187634855,
+            "params_wd": 0.4773614278453204,
+            "state": "COMPLETE"
+        },
+        {
+            "number": 1,
+            "value": 71.50310948667185,
+            "datetime_start": "2026-03-10 18:44:25.814356",
+            "datetime_complete": "2026-03-10 18:44:29.460626",
+            "duration": "0 days 00:00:03.646270",
+            "params_cogz": 0.21996991315170936,
+            "params_cop": 0.5489492517201164,
+            "params_tw": 1.1836438672045058,
+            "params_wb": 1.6482567885176183,
+            "params_wd": 0.511147960477785,
+            "state": "COMPLETE"
+        },
+        {
+            "number": 2,
+            "value": 72.1189530743582,
+            "datetime_start": "2026-03-10 18:44:29.460843",
+            "datetime_complete": "2026-03-10 18:44:33.061638",
+            "duration": "0 days 00:00:03.600795",
+            "params_cogz": 0.27669826111321616,
+            "params_cop": 0.43645298827344453,
+            "params_tw": 1.3228048185423384,
+            "params_wb": 1.5220081622658341,
+            "params_wd": 0.5357249896627598,
+            "state": "COMPLETE"
+        },
+        {
+            "number": 3,
+            "value": 71.76637150709942,
+            "datetime_start": "2026-03-10 18:44:33.061897",
+            "datetime_complete": "2026-03-10 18:44:36.788745",
+            "duration": "0 days 00:00:03.726848",
+            "params_cogz": 0.3488884136112449,
+            "params_cop": 0.42746349175713094,
+            "params_tw": 1.325356897534787,
+            "params_wb": 1.4875772444580146,
+            "params_wd": 0.5183186814047844,
+            "state": "COMPLETE"
+        },
+        {
+            "number": 4,
+            "value": 71.27080200503424,
+            "datetime_start": "2026-03-10 18:44:36.789031",
+            "datetime_complete": "2026-03-10 18:44:40.496036",
+            "duration": "0 days 00:00:03.707005",
+            "params_cogz": 0.20059667667761805,
+            "params_cop": 0.43331534927341664,
+            "params_tw": 1.3053886489845257,
+            "params_wb": 1.4443994029135176,
+            "params_wd": 0.5429370367170222,
+            "state": "COMPLETE"
+        },
+        {
+            "number": 5,
+            "value": 71.94682325221841,
+            "datetime_start": "2026-03-10 18:44:40.496361",
+            "datetime_complete": "2026-03-10 18:44:44.186440",
+            "duration": "0 days 00:00:03.690079",
+            "params_cogz": 0.32398121777086625,
+            "params_cop": 0.4856523095704782,
+            "params_tw": 1.2314997347953736,
+            "params_wb": 1.641071479403359,
+            "params_wd": 0.48035864825089813,
+            "state": "COMPLETE"
+        },
+        {
+            "number": 6,
+            "value": 71.72561036407396,
+            "datetime_start": "2026-03-10 18:44:44.186866",
+            "datetime_complete": "2026-03-10 18:44:47.911228",
+            "duration": "0 days 00:00:03.724362",
+            "params_cogz": 0.23222994703746438,
+            "params_cop": 0.5469446005828751,
+            "params_tw": 1.1587352870211214,
+            "params_wb": 1.6467468182267102,
+            "params_wd": 0.5221009809071729,
+            "state": "COMPLETE"
+        },
+        {
+            "number": 7,
+            "value": 72.23927072258562,
+            "datetime_start": "2026-03-10 18:44:47.911646",
+            "datetime_complete": "2026-03-10 18:44:51.585835",
+            "duration": "0 days 00:00:03.674189",
+            "params_cogz": 0.30705752929868346,
+            "params_cop": 0.5789097871815043,
+            "params_tw": 1.2887327874320165,
+            "params_wb": 1.467832449343394,
+            "params_wd": 0.4652342629672147,
+            "state": "COMPLETE"
+        },
+        {
+            "number": 8,
+            "value": 72.30450976723073,
+            "datetime_start": "2026-03-10 18:44:51.586296",
+            "datetime_complete": "2026-03-10 18:44:55.286158",
+            "duration": "0 days 00:00:03.699862",
+            "params_cogz": 0.286052624607115,
+            "params_cop": 0.599831506291722,
+            "params_tw": 1.1895663682226743,
+            "params_wb": 1.4339209711418404,
+            "params_wd": 0.4857648268800057,
+            "state": "COMPLETE"
+        },
+        {
+            "number": 9,
+            "value": 71.73984980905321,
+            "datetime_start": "2026-03-10 18:44:55.286667",
+            "datetime_complete": "2026-03-10 18:44:58.944579",
+            "duration": "0 days 00:00:03.657912",
+            "params_cogz": 0.24419321664328011,
+            "params_cop": 0.5491916485561792,
+            "params_tw": 1.3079337079807785,
+            "params_wb": 1.422490222781626,
+            "params_wd": 0.48102100686473276,
+            "state": "COMPLETE"
+        }
+    ]
+}
+--- KONEC SOUBORU: data\optimizations\CTU25_opt_2.json ---
+
+--- ZAČÁTEK SOUBORU: data\optimizations\CTU25_opt_2026-03-10_20-05-24.json ---
+{
+    "metadata": {
+        "timestamp": "2026-03-10_20-05-24",
+        "base_vehicle_name": "CTU25",
+        "tracks_used": [
+            "FSG"
+        ],
+        "best_lap_time": 71.21910603268671
+    },
+    "base_car_params": {
+        "acp_capacity": 6.0,
+        "weight": 280.0,
+        "wb": 1.53,
+        "tw": 1.2,
+        "wd": 0.47,
+        "cogz": 0.2,
+        "i": 11.46,
+        "M_max": 30.0,
+        "cd": 1.8,
+        "cd_drs": 1.1,
+        "cl": 5.64,
+        "cl_drs": 4.2,
+        "cop": 0.52,
+        "regen_eff": 0.8,
+        "model_type": "quasi_steady",
+        "energy_limit": null,
+        "drs_allowed": false,
+        "soc_start": 0.77,
+        "name": "CTU25",
+        "mu_x": 1.25,
+        "mu_y": 1.25,
+        "power_max": 80000.0
+    },
+    "best_params": {
+        "cop": 0.5559392300908894,
+        "wb": 1.5898431633889685,
+        "tw": 1.3462963853349623,
+        "wd": 0.4693740609682797,
+        "cogz": 0.2194473337524337
+    },
+    "parameter_importances": {
+        "cogz": 0.4549795431344441,
+        "wb": 0.2534179684216279,
+        "tw": 0.15082053122117628,
+        "wd": 0.10696933167046374,
+        "cop": 0.033812625552288034
+    },
+    "trials": [
+        {
+            "number": 0,
+            "value": 71.82124560559029,
+            "datetime_start": "2026-03-10 20:04:33.129301",
+            "datetime_complete": "2026-03-10 20:04:36.770417",
+            "duration": "0 days 00:00:03.641116",
+            "params_cogz": 0.30989474633930136,
+            "params_cop": 0.5778794624701762,
+            "params_tw": 1.2069676665936984,
+            "params_wb": 1.5248835841204649,
+            "params_wd": 0.4551889562727256,
+            "state": "COMPLETE"
+        },
+        {
+            "number": 1,
+            "value": 71.28241745484577,
+            "datetime_start": "2026-03-10 20:04:36.770685",
+            "datetime_complete": "2026-03-10 20:04:40.571612",
+            "duration": "0 days 00:00:03.800927",
+            "params_cogz": 0.23539049906242362,
+            "params_cop": 0.42503901880484757,
+            "params_tw": 1.2326758483880256,
+            "params_wb": 1.6282919528365707,
+            "params_wd": 0.48024077945750815,
+            "state": "COMPLETE"
+        },
+        {
+            "number": 2,
+            "value": 71.29845235577814,
+            "datetime_start": "2026-03-10 20:04:40.571817",
+            "datetime_complete": "2026-03-10 20:04:44.306692",
+            "duration": "0 days 00:00:03.734875",
+            "params_cogz": 0.2379004789077085,
+            "params_cop": 0.4830452512276386,
+            "params_tw": 1.3352228651389233,
+            "params_wb": 1.6498561915813148,
+            "params_wd": 0.4767843960465731,
+            "state": "COMPLETE"
+        },
+        {
+            "number": 3,
+            "value": 71.21910603268671,
+            "datetime_start": "2026-03-10 20:04:44.306922",
+            "datetime_complete": "2026-03-10 20:04:48.279531",
+            "duration": "0 days 00:00:03.972609",
+            "params_cogz": 0.2194473337524337,
+            "params_cop": 0.5559392300908894,
+            "params_tw": 1.3462963853349623,
+            "params_wb": 1.5898431633889685,
+            "params_wd": 0.4693740609682797,
+            "state": "COMPLETE"
+        },
+        {
+            "number": 4,
+            "value": 71.74157471825713,
+            "datetime_start": "2026-03-10 20:04:48.279800",
+            "datetime_complete": "2026-03-10 20:04:52.071759",
+            "duration": "0 days 00:00:03.791959",
+            "params_cogz": 0.3079290919537674,
+            "params_cop": 0.40506652662452414,
+            "params_tw": 1.1571351499571385,
+            "params_wb": 1.466893721955211,
+            "params_wd": 0.49458967795435055,
+            "state": "COMPLETE"
+        },
+        {
+            "number": 5,
+            "value": 71.99118204031075,
+            "datetime_start": "2026-03-10 20:04:52.072109",
+            "datetime_complete": "2026-03-10 20:04:55.899459",
+            "duration": "0 days 00:00:03.827350",
+            "params_cogz": 0.25514795722781614,
+            "params_cop": 0.5970750260791436,
+            "params_tw": 1.1757288539767032,
+            "params_wb": 1.6394062644169618,
+            "params_wd": 0.5040804976023584,
+            "state": "COMPLETE"
+        },
+        {
+            "number": 6,
+            "value": 72.19968094196052,
+            "datetime_start": "2026-03-10 20:04:55.899805",
+            "datetime_complete": "2026-03-10 20:04:59.899889",
+            "duration": "0 days 00:00:04.000084",
+            "params_cogz": 0.3169623379480888,
+            "params_cop": 0.4749267342797002,
+            "params_tw": 1.249518482794997,
+            "params_wb": 1.4251765010528727,
+            "params_wd": 0.5246218116642734,
+            "state": "COMPLETE"
+        },
+        {
+            "number": 7,
+            "value": 71.6202744919721,
+            "datetime_start": "2026-03-10 20:04:59.900603",
+            "datetime_complete": "2026-03-10 20:05:03.738154",
+            "duration": "0 days 00:00:03.837551",
+            "params_cogz": 0.24869409362649658,
+            "params_cop": 0.5265216538724979,
+            "params_tw": 1.2198259048963411,
+            "params_wb": 1.5715202873703644,
+            "params_wd": 0.47126457168021685,
+            "state": "COMPLETE"
+        },
+        {
+            "number": 8,
+            "value": 71.7645403243122,
+            "datetime_start": "2026-03-10 20:05:03.738984",
+            "datetime_complete": "2026-03-10 20:05:07.693292",
+            "duration": "0 days 00:00:03.954308",
+            "params_cogz": 0.23224367529175477,
+            "params_cop": 0.4986779799681643,
+            "params_tw": 1.252145853799962,
+            "params_wb": 1.4517419586423197,
+            "params_wd": 0.5289885333658264,
+            "state": "COMPLETE"
+        },
+        {
+            "number": 9,
+            "value": 71.27610007489929,
+            "datetime_start": "2026-03-10 20:05:07.694043",
+            "datetime_complete": "2026-03-10 20:05:11.615262",
+            "duration": "0 days 00:00:03.921219",
+            "params_cogz": 0.21376074464740977,
+            "params_cop": 0.46187991196547384,
+            "params_tw": 1.2503959174675012,
+            "params_wb": 1.6285122489368302,
+            "params_wd": 0.5172210434656067,
+            "state": "COMPLETE"
+        }
+    ]
+}
+--- KONEC SOUBORU: data\optimizations\CTU25_opt_2026-03-10_20-05-24.json ---
 
 --- ZAČÁTEK SOUBORU: src\core\car.py ---
 from dataclasses import dataclass,field
@@ -1079,23 +1582,23 @@ def generate_smoothed_track(all_data, lap_infos, is_closed, r_penalty, w_penalty
     "weight": 280.0,
     "wb": 1.53,
     "tw": 1.2,
-    "wd": 0.52,
-    "cogz": 0.35,
+    "wd": 0.47,
+    "cogz": 0.2,
     "i": 11.46,
     "M_max": 30.0,
     "cd": 1.8,
     "cd_drs": 1.1,
-    "cl": 5.04,
+    "cl": 5.64,
     "cl_drs": 4.2,
-    "cop": 0.53,
-    "power_limit": 37.0,
+    "cop": 0.52,
+    "power_limit": 80.0,
     "regen_eff": 0.8,
     "laps": 22,
-    "ds": 0.3,
-    "model_type": "quasi_steady",
+    "ds": 1.0,
+    "model_type": "mass_point_rk4",
     "energy_limit": null,
     "drs_allowed": false,
-    "soc_start": 0.77,
+    "soc_start": 0.74,
     "name": "CTU25",
     "mu_x": 1.25,
     "mu_y": 1.25
@@ -1140,13 +1643,13 @@ from src.optimization.solvers import InitConditions, calculate_initial_guess
 from src.optimization.work_thread import SimulationWorker
 
 # import tasks
-from src.optimization.tasks import SingleLapTask, LaptimeMapTask, StrategyOptTask, DeploymentOptTask, TrackGenerationTask
+from src.optimization.tasks import SingleLapTask, LaptimeMapTask, StrategyOptTask, DeploymentOptTask, TrackGenerationTask, OptimizationTask
 
 
 # import requests
 from src.handlers.requests import (
     SingleLapRequest, EnduranceRequest, LapMapTestRequest, 
-    StrategyOptRequest, DeploymentOptRequest, TrackGenerationRequest
+    StrategyOptRequest, DeploymentOptRequest, TrackGenerationRequest, OptimizationRequest
 )
 
 class SimulationController(QObject):
@@ -1192,13 +1695,25 @@ class SimulationController(QObject):
 
             elif isinstance(req, LapMapTestRequest):
                 track = Track.load(req.track_name)
-                solver = self._create_solver(car, track, laps=req.laps)
+                #we use strictly the mass point solver since it can limit energy
+                solver = MassPointSolver(car, track)
                 task = LaptimeMapTask(solver, car, track, req.ds, req.laps)
 
             elif isinstance(req, TrackGenerationRequest):
                 # track generation task doesnt use the car object
                 task = TrackGenerationTask(
                     req.data, req.lap_infos, req.is_closed, req.r_penalty, req.w_penalty
+                )
+            
+            elif isinstance(req, OptimizationRequest):
+                # Zde nevytváříme 'car' a 'solver' přímo v kontroleru, 
+                # protože to za nás udělá OptimizationTask pro každý trial.
+                task = OptimizationTask(
+                    car_params=req.car_params,
+                    ds=req.ds,
+                    vehicle_name=req.vehicle_name,
+                    tracks=req.tracks,
+                    bounds=req.bounds
                 )
 
             elif isinstance(req, (StrategyOptRequest, DeploymentOptRequest)):
@@ -2552,7 +3067,23 @@ class QuasiSteadySolver(BaseSolver):
             Rl=self.car.wheel_radius
 
         )
-        print(f"Power max: {self.qs_car.P_max}")
+        #print(f"Power max: {self.qs_car.P_max}")
+
+
+    def generate_ggv(self):
+        self.qs_car.find_GGV(delta_max=0.2, beta_max=0.07, kappa_max=0.15, tol=0.1, N=9)
+        self.df = self.qs_car.create_lookup_tables(steps=40)
+        self._setup_luts()
+
+    def set_ggv(self, df, slices_ax_pos, slices_ax_neg, slices_ay_throttle, slices_ay_brake):
+       
+        self.df = df
+        self.slices_ax_pos = slices_ax_pos
+        self.slices_ax_neg = slices_ax_neg
+        self.slices_ay_throttle = slices_ay_throttle
+        self.slices_ay_brake = slices_ay_brake
+        self.v_levels = np.sort(self.df['v'].unique())
+
     def _setup_luts(self):
         self.v_levels = np.sort(self.df['v'].unique())
 
@@ -2637,12 +3168,8 @@ class QuasiSteadySolver(BaseSolver):
         return v_test, ay_lim
 
     def solve(self, init_cond: InitConditions, init_guess=None, ds=0.5) -> SolverResults:
-        # 0. Generate GGV Map and LUTs in the worker thread 
-        print("Starting GGV map generation...")
-        self.qs_car.find_GGV(delta_max=0.2, beta_max=0.07, kappa_max=0.15, tol=0.1, N=9)
-        self.df = self.qs_car.create_lookup_tables(steps=40)
-        self._setup_luts()
-        print("GGV map generation completed. Proceeding to track sweep.")
+        if not hasattr(self, 'df'):
+            self.generate_ggv()
 
         # 1. evaluate track geometry
         total_length = self.track.length
@@ -3439,6 +3966,8 @@ class SimulationTask(ABC):
 import os
 import time
 import numpy as np
+import json
+from dataclasses import asdict
 from scipy.interpolate import griddata
 from src.optimization.solvers.base_solver import InitConditions
 from .base_task import SimulationTask, SolverPayload
@@ -3454,10 +3983,10 @@ class LaptimeMapTask(SimulationTask):
     def execute(self, progress_callback) -> SolverPayload:
         start = time.time()
         
-        acp_targets = np.linspace(3.5, 9.0, num=15, endpoint=True)
+        acp_targets = np.linspace(3.5, 9.0, num=10, endpoint=True)
         e_targets = np.round(acp_targets / self.laps, 2)
-        regen_targets = np.linspace(0.0, 1.1, num=15, endpoint=True)
-        soc_targets = np.linspace(0.1, 1.05, num=15, endpoint=True)
+        regen_targets = np.linspace(0.0, 1.1, num=10, endpoint=True)
+        soc_targets = np.linspace(0.1, 1.05, num=10, endpoint=True)
 
         total_steps = len(e_targets) * len(regen_targets) * len(soc_targets)
         results_log = []
@@ -3520,7 +4049,12 @@ class LaptimeMapTask(SimulationTask):
 
         save_dir = os.path.join("data", "tracks", "lapmaps")
         os.makedirs(save_dir, exist_ok=True)
-        file_path = os.path.join(save_dir, f"laptime_map_{self.track.name}.npz")
+        file_path = os.path.join(save_dir, f"{self.track.name}_laptime_map.npz")
+
+        # Extract car config as json string (selected parameters only)
+        allowed_keys = ["name", "weight", "cd", "cl", "acp_capacity", "drs_allowed", "power_max"]
+        car_dict = {k: getattr(self.car, k) for k in allowed_keys if hasattr(self.car, k)}
+        car_json = json.dumps(car_dict)
 
         np.savez_compressed(
             file_path,
@@ -3529,7 +4063,8 @@ class LaptimeMapTask(SimulationTask):
             regen_targets=np.array(regen_targets),
             flat_lap_times=np.array(flat_lap_times), 
             laps=np.array(self.laps),
-            acp_capacity=np.array(self.car.acp_capacity)
+            acp_capacity=np.array(self.car.acp_capacity),
+            car_config=np.array([car_json])
         )
 
         return SolverPayload(
@@ -3538,6 +4073,114 @@ class LaptimeMapTask(SimulationTask):
             meta={"laps": self.laps, "car": self.car, "track": self.track}
         )
 --- KONEC SOUBORU: src\optimization\tasks\laptime_map_task.py ---
+
+--- ZAČÁTEK SOUBORU: src\optimization\tasks\optimization_task.py ---
+import optuna
+from dataclasses import dataclass
+from src.core.car import Car
+from src.core.track import Track
+from src.optimization.solvers.quasi_steady import QuasiSteadySolver
+from src.optimization.solvers.base_solver import InitConditions
+from src.optimization.tasks.base_task import SimulationTask, SolverPayload
+
+
+@dataclass
+class OptimizationPayload:
+    best_params: dict
+    best_lap_time: float
+    study: optuna.Study
+    base_vehicle_name: str
+    base_car_params: dict  
+    tracks: list           
+
+class OptimizationTask(SimulationTask):
+    def __init__(self, car_params: dict, ds: float, vehicle_name: str, tracks: list, bounds: dict):
+        super().__init__()
+        self.base_car_params = car_params
+        self.ds = ds
+        self.vehicle_name = vehicle_name
+        self.bounds = bounds
+       
+        self.n_trials = 10
+        
+        self.loaded_tracks = [Track.load(t_name) for t_name in tracks]
+
+    def execute(self, progress_callback=None):
+        
+
+        def objective(trial):
+            
+            current_params = self.base_car_params.copy()
+            for param_name, (p_min, p_max) in self.bounds.items():
+               
+                val = trial.suggest_float(param_name, p_min, p_max)
+                current_params[param_name] = val
+
+          
+            car = Car(**current_params)
+
+            base_solver = QuasiSteadySolver(car, self.loaded_tracks[0])
+            base_solver.generate_ggv()
+            
+            total_lap_time = 0.0
+            
+          
+            for track in self.loaded_tracks:
+               
+                if track.speed is not None:
+                    init_cond = InitConditions(v=track.speed[0], T=0.0, E=0.0)
+                else:
+                    init_cond = InitConditions(v=5, T=0.0, E=0.0)
+
+                solver = QuasiSteadySolver(car, track)
+
+                solver.set_ggv(
+                    df=base_solver.df,
+                    slices_ax_pos=base_solver.slices_ax_pos,
+                    slices_ax_neg=base_solver.slices_ax_neg,
+                    slices_ay_throttle=base_solver.slices_ay_throttle,
+                    slices_ay_brake=base_solver.slices_ay_brake
+                )
+                
+                res = solver.solve(ds=self.ds, init_cond=init_cond)
+                
+          
+                total_lap_time += res.lap_time
+                
+            return total_lap_time
+
+        optuna.logging.set_verbosity(optuna.logging.WARNING)
+
+        study = optuna.create_study(direction="minimize")
+        
+        
+        def optuna_callback(study, trial):
+            if progress_callback:
+                
+                progress_callback(len(study.trials), self.n_trials)
+
+
+        study.optimize(objective, n_trials=self.n_trials, callbacks=[optuna_callback])
+        
+        
+        results = OptimizationPayload(
+            best_params=study.best_params,
+            best_lap_time=study.best_value,
+            study=study,
+            base_vehicle_name=self.vehicle_name,
+            base_car_params=self.base_car_params,        
+            tracks=[t.name for t in self.loaded_tracks]
+        )
+
+        return SolverPayload(
+            kind="optimization",
+            data=results,
+            meta={
+                    "car": self.vehicle_name,
+                    "tracks": [t.name for t in self.loaded_tracks],   
+                }
+        )
+--- KONEC SOUBORU: src\optimization\tasks\optimization_task.py ---
 
 --- ZAČÁTEK SOUBORU: src\optimization\tasks\single_lap.py ---
 import time
@@ -3563,7 +4206,7 @@ class SingleLapTask(SimulationTask):
 
        # init_guess = calculate_initial_guess(self.car, self.track, init_cond, ds=self.ds)
         
-    
+        #ggv = self.solver.qs_car.find_GGV(delta_max=0.2, beta_max=0.07, kappa_max=0.15, tol=0.1, N=9)
         res = self.solver.solve(init_cond, ds=self.ds, init_guess=None)
         
         end = time.time()
@@ -3706,6 +4349,7 @@ from .single_lap import SingleLapTask
 from .laptime_map_task import LaptimeMapTask
 from .strategy import StrategyOptTask, DeploymentOptTask
 from .track_generation_task import TrackGenerationTask
+from .optimization_task import OptimizationTask
 --- KONEC SOUBORU: src\optimization\tasks\__init__.py ---
 
 --- ZAČÁTEK SOUBORU: src\ui\compare_results.py ---
@@ -4603,10 +5247,12 @@ class EnduranceResultsWindow(QWidget):
 
 --- ZAČÁTEK SOUBORU: src\ui\endurance_strategy.py ---
 import numpy as np
+import json
 import casadi as ca
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, 
                              QSlider, QLabel, QMessageBox, QPushButton, 
-                             QDoubleSpinBox, QTabWidget, QGroupBox, QApplication, QSizePolicy)
+                             QDoubleSpinBox, QTabWidget, QGroupBox, QApplication, QSizePolicy,
+                             QDialog, QTableWidget, QTableWidgetItem, QHeaderView)
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QGuiApplication
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg, NavigationToolbar2QT
@@ -4850,6 +5496,16 @@ class LaptimeAppMainWindow(QWidget):
         self.btn_deploy.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_deploy.clicked.connect(self.run_deployment)
         
+        self.btn_car_config = QPushButton("Show car config")
+        self.btn_car_config.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_car_config.clicked.connect(self.show_car_config)
+        self.btn_car_config.setStyleSheet("background-color: #64748b;")
+        if hasattr(self, 'car_config') and self.car_config:
+            name = self.car_config.get('name', 'Unknown')
+            self.btn_car_config.setText(f"Car config ({name})")
+        else:
+            self.btn_car_config.setEnabled(False)
+
         # inputs
         lbl_regen = QLabel("Recuperation [%]:")
         lbl_regen.setStyleSheet("font-weight: bold;")
@@ -4867,6 +5523,7 @@ class LaptimeAppMainWindow(QWidget):
         
         control_layout.addWidget(self.btn_optimize)
         control_layout.addWidget(self.btn_deploy)
+        control_layout.addWidget(self.btn_car_config)
         control_layout.addStretch() 
         control_layout.addWidget(lbl_regen)
         control_layout.addWidget(self.spin_regen)
@@ -4903,6 +5560,12 @@ class LaptimeAppMainWindow(QWidget):
             e_targets = data['e_targets']
             regen_targets = data['regen_targets']
             flat_lap_times = data['flat_lap_times']
+            
+            if 'car_config' in data:
+                car_json = data['car_config'][0]
+                self.car_config = json.loads(car_json)
+            else:
+                self.car_config = None
             
             shape_3d = (len(soc_targets), len(e_targets), len(regen_targets))
             lap_times_3d = flat_lap_times.reshape(shape_3d)
@@ -4981,6 +5644,66 @@ class LaptimeAppMainWindow(QWidget):
 
     def stop_loading(self, *args, **kwargs):
         self.loading_overlay.hide_loading()
+
+    def show_car_config(self):
+        if not hasattr(self, 'car_config') or not self.car_config:
+            return
+            
+        dialog = QDialog(self)
+        dialog.setWindowTitle(f"Car Configuration: {self.car_config.get('name', 'Unknown')}")
+        dialog.resize(500, 600)
+        
+        layout = QVBoxLayout(dialog)
+        
+        table = QTableWidget()
+        table.setColumnCount(2)
+        table.setRowCount(len(self.car_config))
+        table.setHorizontalHeaderLabels(["Parameter", "Value"])
+        
+        table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        table.setAlternatingRowColors(True)
+        table.setStyleSheet("""
+            QTableWidget {
+                background-color: #ffffff;
+                alternate-background-color: #f8f9fa;
+                selection-background-color: #e2e8f0;
+                selection-color: #0f172a;
+                border: 1px solid #cbd5e1;
+                border-radius: 4px;
+            }
+            QHeaderView::section {
+                background-color: #f1f5f9;
+                color: #475569;
+                padding: 5px;
+                border: 1px solid #cbd5e1;
+                font-weight: bold;
+            }
+        """)
+
+        for row, (key, value) in enumerate(self.car_config.items()):
+            item_key = QTableWidgetItem(str(key))
+            item_key.setFlags(item_key.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            
+            if isinstance(value, float):
+                val_str = f"{value:.4g}"
+            else:
+                val_str = str(value)
+                
+            item_value = QTableWidgetItem(val_str)
+            item_value.setFlags(item_value.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            
+            table.setItem(row, 0, item_key)
+            table.setItem(row, 1, item_value)
+            
+        layout.addWidget(table)
+        
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(dialog.accept)
+        close_btn.setStyleSheet("background-color: #64748b; color: white; padding: 8px; border-radius: 4px; font-weight: bold;")
+        layout.addWidget(close_btn)
+        
+        dialog.exec()
 
 
 class StrategyResultTab(QWidget):
@@ -5319,12 +6042,14 @@ class LoadingOverlay(QWidget):
         self.lbl_gif = QLabel()
         self.lbl_gif.setAlignment(Qt.AlignmentFlag.AlignCenter)
      
-        gif_path = "data/loading3.gif" 
+        gif_path = "data/loading1.gif" 
         self.movie = QMovie(gif_path)
      
-        self.movie.setScaledSize(QSize(300, 300)) 
+        self.lbl_gif.setFixedSize(300, 300)
+        self.lbl_gif.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        
+        self.movie.frameChanged.connect(self.update_gif_frame)
         self.movie.finished.connect(self.movie.start)
-        self.lbl_gif.setMovie(self.movie)
         
         # text label
         self.lbl_text = QLabel("Calculating...")
@@ -5396,6 +6121,25 @@ class LoadingOverlay(QWidget):
         self.show()
         self.raise_()
 
+    def update_gif_frame(self, frame_number):
+        pixmap = self.movie.currentPixmap()
+        if pixmap.isNull():
+            return
+            
+        ratio = self.devicePixelRatioF()
+        physical_size = int(300 * ratio)
+        
+        # Smoothly scale the frame to the target physical size
+        scaled_pixmap = pixmap.scaled(
+            physical_size, physical_size, 
+            Qt.AspectRatioMode.KeepAspectRatio, 
+            Qt.TransformationMode.SmoothTransformation
+        )
+        
+        # Tell Qt this is a High-DPI pixmap before displaying it
+        scaled_pixmap.setDevicePixelRatio(ratio)
+        self.lbl_gif.setPixmap(scaled_pixmap)
+
     def update_progress(self, current, total):
        
         if self.current_progress_fmt:
@@ -5415,6 +6159,96 @@ class LoadingOverlay(QWidget):
         self.movie.stop() 
         self.hide()
 --- KONEC SOUBORU: src\ui\loader.py ---
+
+--- ZAČÁTEK SOUBORU: src\ui\load_optimization_dialog.py ---
+import os
+import json
+from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QTableWidget, QTableWidgetItem, 
+                             QPushButton, QHBoxLayout, QHeaderView, QMessageBox)
+from PyQt6.QtCore import Qt
+class LoadOptimizationDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Load optimization run")
+        self.resize(700, 400)
+        self.selected_data = None
+        
+        layout = QVBoxLayout(self)
+        
+        self.table = QTableWidget(0, 4)
+        self.table.setHorizontalHeaderLabels(["Date", "Base Vehicle", "Tracks", "Best Lap Time"])
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+        self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        layout.addWidget(self.table)
+        
+        btn_layout = QHBoxLayout()
+        btn_load = QPushButton("Load selected")
+        btn_load.setObjectName("BtnOptimize")
+        btn_load.clicked.connect(self.load_selected)
+        
+        btn_cancel = QPushButton("Cancel")
+        btn_cancel.clicked.connect(self.reject)
+        
+        btn_layout.addStretch()
+        btn_layout.addWidget(btn_load)
+        btn_layout.addWidget(btn_cancel)
+        layout.addLayout(btn_layout)
+        
+        self.files_map = {} 
+        self.populate_table()
+        
+    def populate_table(self):
+        save_dir = os.path.join("data", "optimizations")
+        if not os.path.exists(save_dir):
+            return
+            
+        row = 0
+    
+        for filename in sorted(os.listdir(save_dir), reverse=True):
+            if filename.endswith(".json"):
+                filepath = os.path.join(save_dir, filename)
+                try:
+                    with open(filepath, 'r', encoding='utf-8') as f:
+                        data = json.load(f)
+                        meta = data.get("metadata", {})
+                        
+                        date_str = meta.get("timestamp", filename)
+                        vehicle = meta.get("base_vehicle_name", "N/A")
+                        tracks = ", ".join(meta.get("tracks_used", []))
+                        best_time = f"{meta.get('best_lap_time', 0):.3f} s"
+                        
+                        self.table.insertRow(row)
+                        self.table.setItem(row, 0, QTableWidgetItem(date_str))
+                        self.table.setItem(row, 1, QTableWidgetItem(vehicle))
+                        self.table.setItem(row, 2, QTableWidgetItem(tracks))
+                  
+                        time_item = QTableWidgetItem(best_time)
+                        time_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+                        self.table.setItem(row, 3, time_item)
+                        
+                        self.files_map[row] = filepath
+                        row += 1
+                except Exception as e:
+                    print(f"Failed to load {filename}: {e}")
+                    
+    def load_selected(self):
+        selected = self.table.selectedItems()
+        if not selected:
+            QMessageBox.warning(self, "Warning", "Please select a run to load.")
+            return
+            
+        row = selected[0].row()
+        filepath = self.files_map.get(row)
+        if filepath:
+            try:
+                with open(filepath, 'r', encoding='utf-8') as f:
+                    self.selected_data = json.load(f)
+                self.accept()
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Failed to load file:\n{e}")
+--- KONEC SOUBORU: src\ui\load_optimization_dialog.py ---
 
 --- ZAČÁTEK SOUBORU: src\ui\main_window.py ---
 import os
@@ -5599,6 +6433,7 @@ class MainWindow(QMainWindow):
         self.controller.simulationFinished.connect(lambda _: self.loading_overlay.hide_loading())
         self.controller.simulationError.connect(lambda _: self.loading_overlay.hide_loading())
 
+
         # initial loads
         self.load_track_list()
         self.load_vehicle_list()
@@ -5780,6 +6615,12 @@ class MainWindow(QMainWindow):
         self.btn_optimize.clicked.connect(self.on_optimize_car_clicked)
         layout.addWidget(self.btn_optimize)
 
+        self.btn_sensitivity = QPushButton("Run sensitivity test")
+        self.btn_sensitivity.setObjectName("BtnSensitivity")
+        self.btn_sensitivity.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_sensitivity.clicked.connect(self.on_sensitivity_test_clicked)
+        layout.addWidget(self.btn_sensitivity)
+
         self.btn_endurance_strategy = QPushButton("Endurance strategy")
         self.btn_endurance_strategy.setObjectName("BtnEndurance")
         self.btn_endurance_strategy.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -5944,20 +6785,32 @@ class MainWindow(QMainWindow):
         if dialog.exec() == QDialog.DialogCode.Accepted:
             opt_data = dialog.get_optimization_data()
             
-            # Načteme parametry aktuálně zvoleného (base) auta
-            base_car_params = ConfigManager.load_vehicle(opt_data["vehicle_name"], self.default_params)
             
-            # Sestavíme Request
+            base_car_params = ConfigManager.load_vehicle(opt_data["vehicle_name"], self.default_params)
+
+            base_car_params.pop("laps", None)
+            base_car_params.pop("ds", None) 
+            base_car_params.pop("mass", None)
+            
+            p_kw = base_car_params.pop("power_limit", 80.0)
+            base_car_params["power_max"] = p_kw * 1000.0
+            
+          
             req = OptimizationRequest(
                 car_params=base_car_params,
-                ds=self.input_ds.value(), # Použijeme nastavený krok
+                ds=self.input_ds.value(), 
                 vehicle_name=opt_data["vehicle_name"],
                 tracks=opt_data["tracks"],
                 bounds=opt_data["bounds"]
             )
             
-            # Pošleme controlleru ke zpracování
+            
             self.controller.handle_request(req)
+
+    def on_sensitivity_test_clicked(self):
+        from src.ui.sensitivity_dialog import SensitivityDialog
+        dialog = SensitivityDialog(self.current_vehicle_name, self.car_params, self)
+        dialog.exec()
 
     def on_compare_clicked(self):
         self.openCompareRequested.emit()
@@ -6220,11 +7073,13 @@ from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QGroupBox,
                              QLabel, QDoubleSpinBox, QPushButton, QGridLayout, QMessageBox)
 from PyQt6.QtCore import Qt
 from src.utils.config_manager import ConfigManager
+from src.ui.optimization_results_dialog import OptimizationResultsDialog
+from src.ui.load_optimization_dialog import LoadOptimizationDialog
 
 class OptimizationDialog(QDialog):
     def __init__(self, current_vehicle_name, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Car Parameters Optimization")
+        self.setWindowTitle("Car parameters optimization")
         self.setMinimumWidth(500)
         self.setMinimumHeight(600)
         
@@ -6249,7 +7104,7 @@ class OptimizationDialog(QDialog):
         layout_car.addWidget(self.combo_vehicle)
         layout.addWidget(group_car)
         
-        # --- 2. Track Selection ---
+      
         group_tracks = QGroupBox("2. Tracks to evaluate")
         group_tracks.setStyleSheet("QGroupBox { border: 1px solid #3b82f6; }")
         layout_tracks = QVBoxLayout(group_tracks)
@@ -6271,12 +7126,11 @@ class OptimizationDialog(QDialog):
         layout_tracks.addWidget(scroll_tracks)
         layout.addWidget(group_tracks)
         
-        
+      
         group_params = QGroupBox("3. Parameters bounds")
         group_params.setStyleSheet("QGroupBox { border: 1px solid #3b82f6; }")
         layout_params = QGridLayout(group_params)
         
-   
         layout_params.addWidget(QLabel("Optimize"), 0, 0)
         layout_params.addWidget(QLabel("Parameter"), 0, 1)
         layout_params.addWidget(QLabel("Min bound"), 0, 2)
@@ -6294,7 +7148,7 @@ class OptimizationDialog(QDialog):
         
         for i, (key, label, def_min, def_max, step) in enumerate(params_setup, start=1):
             cb_enable = QCheckBox()
-            cb_enable.setChecked(True) # 
+            cb_enable.setChecked(True) 
             
             lbl_name = QLabel(label)
             
@@ -6308,7 +7162,6 @@ class OptimizationDialog(QDialog):
             spin_max.setSingleStep(step)
             spin_max.setValue(def_max)
             
-          
             cb_enable.toggled.connect(spin_min.setEnabled)
             cb_enable.toggled.connect(spin_max.setEnabled)
             
@@ -6326,12 +7179,18 @@ class OptimizationDialog(QDialog):
         self.btn_cancel = QPushButton("Cancel")
         self.btn_cancel.clicked.connect(self.reject)
         
+        
+        self.btn_load_run = QPushButton("Load Previous Run")
+        self.btn_load_run.setObjectName("BtnOptimize") 
+        self.btn_load_run.clicked.connect(self.load_previous_run)
+        
         self.btn_start = QPushButton("Start optimization")
         self.btn_start.setObjectName("BtnRunSingle") 
         self.btn_start.clicked.connect(self.validate_and_accept)
         
         btn_layout.addStretch()
         btn_layout.addWidget(self.btn_cancel)
+        btn_layout.addWidget(self.btn_load_run) 
         btn_layout.addWidget(self.btn_start)
         layout.addLayout(btn_layout)
 
@@ -6346,13 +7205,13 @@ class OptimizationDialog(QDialog):
                 self.track_checkboxes[t_name] = cb
 
     def validate_and_accept(self):
-        # Kontrola, zda je vybraná alespoň jedna trať
+    
         selected = [n for n, cb in self.track_checkboxes.items() if cb.isChecked()]
         if not selected:
             QMessageBox.warning(self, "Warning", "Please select at least one track for optimization.")
             return
             
-        # Kontrola min < max
+      
         for key, w in self.param_widgets.items():
             if w["enable"].isChecked() and w["min"].value() >= w["max"].value():
                 QMessageBox.warning(self, "Warning", f"Min bound must be strictly less than Max bound for {key}!")
@@ -6372,7 +7231,433 @@ class OptimizationDialog(QDialog):
             "tracks": selected_tracks,
             "bounds": bounds
         }
+    
+    def load_previous_run(self):
+        dialog = LoadOptimizationDialog(self)
+        if dialog.exec():
+          
+            json_data = dialog.selected_data
+            
+            
+            res_dialog = OptimizationResultsDialog(payload=None, json_data=json_data, parent=self)
+            res_dialog.exec()
 --- KONEC SOUBORU: src\ui\optimization_dialog.py ---
+
+--- ZAČÁTEK SOUBORU: src\ui\optimization_results_dialog.py ---
+import os
+import json
+from datetime import datetime
+import numpy as np
+import pandas as pd
+import pyqtgraph as pg
+try:
+    import optuna
+except ImportError:
+    pass
+
+from sklearn.gaussian_process import GaussianProcessRegressor
+from sklearn.gaussian_process.kernels import Matern, WhiteKernel
+from sklearn.preprocessing import StandardScaler
+
+from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QGroupBox, 
+                             QLabel, QPushButton, QTabWidget, QWidget, QComboBox, 
+                             QSlider, QFileDialog, QMessageBox)
+from PyQt6.QtCore import Qt
+
+class OptimizationResultsDialog(QDialog):
+    C_SIM = '#3b82f6'
+    C_BEST = '#10b981'
+    C_REF = '#334155'
+    
+    def __init__(self, payload=None, json_data=None, parent=None):
+        super().__init__(parent)
+        self.payload = payload
+        self.json_data = json_data
+        
+        pg.setConfigOption('background', 'w')
+        pg.setConfigOption('foreground', '#334155')
+        pg.setConfigOptions(antialias=True)
+        
+        self.setWindowTitle("Optimization results")
+        self.resize(1100, 850)
+       
+        self.setStyleSheet("""
+            QDialog {
+                font-family: 'Segoe UI', system-ui, sans-serif;
+                font-size: 10pt;
+                color: #334155;
+                background-color: #f8f9fa;
+            }
+            QGroupBox {
+                background-color: #ffffff;
+                border: 1px solid #e2e8f0;
+                border-radius: 8px;
+                margin-top: 15px;
+                padding-top: 5px;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                subcontrol-position: top left;
+                padding: 0px 5px;
+                color: #475569;
+                font-weight: bold;
+                font-size: 11pt;
+            }
+            QTabWidget::pane {
+                border: 1px solid #e2e8f0;
+                border-radius: 8px;
+                background: #ffffff;
+            }
+            QTabBar::tab {
+                background: #e2e8f0;
+                color: #64748b;
+                padding: 10px 20px;
+                border-top-left-radius: 6px;
+                border-top-right-radius: 6px;
+                margin-right: 4px;
+                font-weight: bold;
+            }
+            QTabBar::tab:selected {
+                background: #ffffff;
+                color: #0f172a;
+                border-bottom: 2px solid #3b82f6;
+            }
+            QTabBar::tab:hover:!selected {
+                background: #cbd5e1;
+            }
+            QPushButton {
+                background-color: #64748b; 
+                color: white; 
+                font-weight: bold; 
+                padding: 8px 15px; 
+                border-radius: 6px;
+                border: none;
+            }
+            QPushButton:hover {
+                background-color: #475569;
+            }
+            QComboBox {
+                border: 1px solid #cbd5e1;
+                border-radius: 4px;
+                padding: 5px;
+                min-width: 150px;
+                background: white;
+            }
+        """)
+        
+        self._prepare_data()
+        self._init_ui()
+
+    def _prepare_data(self):
+        if self.payload:
+            # data from live optuna oject
+            df = self.payload.study.trials_dataframe()
+            self.df = df[df['state'] == 'COMPLETE'].copy()
+            
+            self.base_vehicle_name = self.payload.base_vehicle_name
+            self.best_lap_time = self.payload.best_lap_time
+            self.best_params = self.payload.best_params
+            self.tracks = self.payload.tracks
+            self.base_car_params = self.payload.base_car_params
+            
+            try:
+                importances = optuna.importance.get_param_importances(self.payload.study)
+                self.importances = {k.replace('params_', ''): v for k, v in importances.items()}
+            except Exception as e:
+                print(f"Could not calculate importances: {e}")
+                self.importances = {}
+                
+        elif self.json_data:
+            # Data from laoded JSON file
+            self.df = pd.DataFrame(self.json_data['trials'])
+            
+            meta = self.json_data.get('metadata', {})
+            self.base_vehicle_name = meta.get('base_vehicle_name', 'Unknown')
+            self.best_lap_time = meta.get('best_lap_time', 0.0)
+            self.tracks = meta.get('tracks_used', [])
+            
+            self.best_params = self.json_data.get('best_params', {})
+            self.base_car_params = self.json_data.get('base_car_params', {})
+            self.importances = self.json_data.get('parameter_importances', {})
+        else:
+            raise ValueError("Must provide either payload or json_data")
+
+        self.trials = self.df['number'].values
+        self.values = self.df['value'].values
+        self.best_values = np.minimum.accumulate(self.values)
+        
+        self.param_cols = [c for c in self.df.columns if c.startswith('params_')]
+        self.param_names = [c.replace('params_', '') for c in self.param_cols]
+        
+        self.y_min = self.df['value'].min()
+        self.y_max = self.df['value'].max()
+
+        # Fit Gaussian Process
+        if len(self.df) > 0 and len(self.param_cols) > 0:
+            X = self.df[self.param_cols].values
+            y = self.df['value'].values
+            
+            self.scaler = StandardScaler()
+            X_scaled = self.scaler.fit_transform(X)
+            
+            # Simple GP kernel covering most parameter behavior combinations
+            kernel = Matern(nu=2.5) + WhiteKernel(noise_level=1)
+            self.gp = GaussianProcessRegressor(kernel=kernel, n_restarts_optimizer=5, normalize_y=True)
+            try:
+                self.gp.fit(X_scaled, y)
+                self.gp_fitted = True
+            except Exception as e:
+                print(f"Warning: GP fitting failed: {e}")
+                self.gp_fitted = False
+        else:
+            self.gp_fitted = False
+
+    def _style_plot(self, plot, title, y_label, x_label, units=None):
+        plot.setBackground("#FFFFFF")
+        plot.setTitle(title, color='#0f172a', size='12pt', bold=True)
+        plot.setLabel('left', y_label, units=units, color='#64748b') if units else plot.setLabel('left', y_label, color='#64748b')
+        plot.setLabel('bottom', x_label, color='#64748b')
+        
+        ax_pen = pg.mkPen(color='#94a3b8', width=1)
+        plot.getAxis('left').setPen(ax_pen)
+        plot.getAxis('left').setTextPen('#475569')
+        plot.getAxis('bottom').setPen(ax_pen)
+        plot.getAxis('bottom').setTextPen('#475569')
+        plot.showGrid(x=True, y=True, alpha=0.15)
+        return plot
+
+    def _init_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(15, 15, 15, 15)
+        
+        summary = QGroupBox(f"Optimization summary (Base: {self.base_vehicle_name})")
+        s_layout = QVBoxLayout(summary)
+        
+        lbl_time = QLabel(f"<b>Best total time:</b> {self.best_lap_time:.3f} s")
+        lbl_time.setStyleSheet("font-size: 14pt; color: #10b981;")
+        s_layout.addWidget(lbl_time)
+        
+        params_list = [f"<b>{k}</b>: {v:.4f}" for k, v in self.best_params.items()]
+        lbl_params = QLabel(f"<b>Best parameters:</b><br>{'  |  '.join(params_list)}")
+        lbl_params.setWordWrap(True)
+        lbl_params.setStyleSheet("font-size: 11pt; color: #334155;")
+        s_layout.addWidget(lbl_params)
+        
+        layout.addWidget(summary)
+
+        self.tabs = QTabWidget()
+        self.init_history_tab()
+        self.init_analysis_tab()
+        self.init_importance_tab()
+        layout.addWidget(self.tabs)
+        
+        btn_layout = QHBoxLayout()
+        
+       
+        if self.payload:
+            btn_save = QPushButton("Save results")
+            btn_save.setMinimumWidth(120)
+            btn_save.setStyleSheet("background-color: #10b981; color: white;")
+            btn_save.clicked.connect(self.save_results)
+            btn_layout.addWidget(btn_save)
+            
+        btn_layout.addStretch()
+        
+        btn_close = QPushButton("Close")
+        btn_close.setMinimumWidth(120)
+        btn_close.clicked.connect(self.accept)
+        btn_layout.addWidget(btn_close)
+        
+        layout.addLayout(btn_layout)
+
+    def save_results(self):
+        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        default_filename = f"{self.base_vehicle_name}_opt_{timestamp}.json"
+        
+        save_dir = os.path.join("data", "optimizations")
+        os.makedirs(save_dir, exist_ok=True)
+        
+        file_path, _ = QFileDialog.getSaveFileName(self, "Save optimization results", os.path.join(save_dir, default_filename), "JSON Files (*.json)")
+        
+        if not file_path: return
+            
+        df_export = self.df.copy()
+        for col in df_export.select_dtypes(include=['datetime', 'timedelta']).columns:
+            df_export[col] = df_export[col].astype(str)
+            
+        data = {
+            "metadata": {
+                "timestamp": timestamp,
+                "base_vehicle_name": self.base_vehicle_name,
+                "tracks_used": self.tracks,
+                "best_lap_time": self.best_lap_time
+            },
+            "base_car_params": self.base_car_params,
+            "best_params": self.best_params,
+            "parameter_importances": self.importances,
+            "trials": df_export.to_dict(orient='records')
+        }
+        
+        try:
+            with open(file_path, 'w', encoding='utf-8') as f: json.dump(data, f, indent=4)
+            QMessageBox.information(self, "Success", f"Results saved to:\n{file_path}")
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to save results:\n{str(e)}")
+
+    def init_history_tab(self):
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        plot = pg.PlotWidget()
+        self._style_plot(plot, "Optimization history", "Objective value (Lap Time)", "Trial number", "s")
+        plot.addItem(pg.ScatterPlotItem(x=self.trials, y=self.values, size=10, pen=pg.mkPen(None), brush=pg.mkBrush(self.C_SIM + '88')))
+        plot.plot(self.trials, self.best_values, pen=pg.mkPen(self.C_BEST, width=3), name="Best Value")
+        layout.addWidget(plot)
+        self.tabs.addTab(widget, "History")
+
+    def init_analysis_tab(self):
+        widget = QWidget()
+        main_layout = QHBoxLayout(widget)
+        
+        plot_layout = QVBoxLayout()
+        self.combo_x = QComboBox()
+        self.combo_x.addItems(self.param_names)
+        self.combo_x.currentIndexChanged.connect(self.update_analysis_plot)
+        
+        header = QHBoxLayout()
+        header.addWidget(QLabel("<b>X-Axis parameter:</b>"))
+        header.addWidget(self.combo_x)
+        header.addStretch()
+        plot_layout.addLayout(header)
+        
+        self.plot_slice = pg.PlotWidget()
+        
+        self.gp_mean_curve = pg.PlotDataItem(pen=pg.mkPen('#e11d48', width=2, style=Qt.PenStyle.DashLine))
+        self.gp_upper_curve = pg.PlotDataItem(pen=pg.mkPen(None))
+        self.gp_lower_curve = pg.PlotDataItem(pen=pg.mkPen(None))
+        self.gp_fill = pg.FillBetweenItem(self.gp_lower_curve, self.gp_upper_curve, brush=pg.mkBrush('#e11d4833'))
+        
+        self.slice_scatter = pg.ScatterPlotItem(size=12, pen=pg.mkPen('#ffffff', width=0.5), brush=pg.mkBrush(self.C_SIM + 'AA'))
+        
+        self.plot_slice.addItem(self.gp_fill)
+        self.plot_slice.addItem(self.gp_mean_curve)
+        self.plot_slice.addItem(self.slice_scatter)
+        plot_layout.addWidget(self.plot_slice)
+        main_layout.addLayout(plot_layout, stretch=3)
+        
+        self.filter_group = QGroupBox("Slice filters")
+        self.filter_layout = QVBoxLayout(self.filter_group)
+        self.sliders = {}
+        self.slider_labels = {}
+        
+        for p_name in self.param_names:
+            p_min, p_max = self.df[f"params_{p_name}"].min(), self.df[f"params_{p_name}"].max()
+            p_layout = QVBoxLayout()
+            lbl = QLabel(f"<b>{p_name}</b>")
+            val_lbl = QLabel(f"Range: {p_min:.3f} - {p_max:.3f}")
+            
+            slider = QSlider(Qt.Orientation.Horizontal)
+            slider.setRange(0, 100); slider.setValue(50)
+            slider.valueChanged.connect(self.update_analysis_plot)
+            
+            p_layout.addWidget(lbl); p_layout.addWidget(slider); p_layout.addWidget(val_lbl)
+            self.filter_layout.addLayout(p_layout)
+            self.sliders[p_name] = slider; self.slider_labels[p_name] = val_lbl
+
+        self.filter_layout.addStretch()
+        main_layout.addWidget(self.filter_group, stretch=1)
+        self.tabs.addTab(widget, "Dynamic slice")
+        self.update_analysis_plot()
+
+    def update_analysis_plot(self):
+        x_name = self.combo_x.currentText()
+        if not x_name: return
+        p_col_x = f"params_{x_name}"
+        x_min, x_max = self.df[p_col_x].min(), self.df[p_col_x].max()
+        
+        x_margin = (x_max - x_min) * 0.05 if x_max != x_min else 1.0
+        y_margin = (self.y_max - self.y_min) * 0.05 if self.y_max != self.y_min else 1.0
+        
+        self.plot_slice.setXRange(x_min - x_margin, x_max + x_margin, padding=0)
+        self.plot_slice.setYRange(self.y_min - y_margin, self.y_max + y_margin, padding=0)
+        
+        mask = np.ones(len(self.df), dtype=bool)
+        for p_name, slider in self.sliders.items():
+            if p_name == x_name:
+                self.slider_labels[p_name].setText("Current X-Axis")
+                slider.setEnabled(False)
+                continue
+            
+            slider.setEnabled(True)
+            p_col = f"params_{p_name}"
+            p_min, p_max = self.df[p_col].min(), self.df[p_col].max()
+            
+            target_val = p_min + (slider.value() / 100.0) * (p_max - p_min)
+            margin = (p_max - p_min) * 0.1
+            mask &= (self.df[p_col] >= target_val - margin) & (self.df[p_col] <= target_val + margin)
+            self.slider_labels[p_name].setText(f"Value: ~{target_val:.3f}")
+
+        filtered_df = self.df[mask]
+        self.slice_scatter.setData(x=filtered_df[p_col_x].values, y=filtered_df['value'].values)
+        
+        # Update GP curve for current slice
+        if getattr(self, 'gp_fitted', False):
+            n_points = 100
+            x_grid = np.linspace(x_min - x_margin, x_max + x_margin, n_points)
+            
+            X_pred = np.zeros((n_points, len(self.param_cols)))
+            for i, p_name in enumerate(self.param_names):
+                if p_name == x_name:
+                    X_pred[:, i] = x_grid
+                else:
+                    slider = self.sliders[p_name]
+                    p_col = f"params_{p_name}"
+                    p_min_s, p_max_s = self.df[p_col].min(), self.df[p_col].max()
+                    target_val = p_min_s + (slider.value() / 100.0) * (p_max_s - p_min_s)
+                    X_pred[:, i] = target_val
+                    
+            try:
+                X_pred_scaled = self.scaler.transform(X_pred)
+                y_mean, y_std = self.gp.predict(X_pred_scaled, return_std=True)
+                
+                self.gp_mean_curve.setData(x=x_grid, y=y_mean)
+                self.gp_upper_curve.setData(x=x_grid, y=y_mean + 1.96 * y_std)
+                self.gp_lower_curve.setData(x=x_grid, y=y_mean - 1.96 * y_std)
+                
+                self.gp_mean_curve.show()
+                self.gp_fill.show()
+            except Exception as e:
+                print(f"GP prediction failed: {e}")
+                self.gp_mean_curve.hide()
+                self.gp_fill.hide()
+        else:
+            self.gp_mean_curve.hide()
+            self.gp_fill.hide()
+
+        self._style_plot(self.plot_slice, f"Slice: {x_name} (Showing {len(filtered_df)} trials)", "Lap Time", x_name, "s")
+
+    def init_importance_tab(self):
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        plot = pg.PlotWidget()
+        self._style_plot(plot, "Hyperparameter importance", "Importance", "Parameters")
+        
+        if self.importances:
+            sorted_items = sorted(self.importances.items(), key=lambda x: x[1], reverse=True)
+            x_pos = np.arange(len(sorted_items))
+            y_vals = [val for _, val in sorted_items]
+            labels = [key for key, _ in sorted_items]
+            
+            plot.addItem(pg.BarGraphItem(x=x_pos, height=y_vals, width=0.6, brush=pg.mkBrush(self.C_SIM)))
+            plot.getAxis('bottom').setTicks([list(zip(x_pos, labels))])
+        else:
+            err_lbl = QLabel("Importance data is not available for this run.")
+            err_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            err_lbl.setStyleSheet("color: #64748b; font-weight: bold; font-size: 12pt;")
+            layout.addWidget(err_lbl)
+
+        layout.addWidget(plot)
+        self.tabs.addTab(widget, "Parameter importance")
+--- KONEC SOUBORU: src\ui\optimization_results_dialog.py ---
 
 --- ZAČÁTEK SOUBORU: src\ui\results_tab.py ---
 import os
@@ -7352,6 +8637,136 @@ class ResultsWindow(QWidget):
         self.tabs.addTab(widget, "Battery")
 --- KONEC SOUBORU: src\ui\results_window.py ---
 
+--- ZAČÁTEK SOUBORU: src\ui\sensitivity_dialog.py ---
+import os
+import glob
+from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QGroupBox, 
+                             QScrollArea, QWidget, QCheckBox, 
+                             QLabel, QDoubleSpinBox, QPushButton, QGridLayout, QMessageBox)
+from PyQt6.QtCore import Qt
+
+class SensitivityDialog(QDialog):
+    def __init__(self, vehicle_name, car_params, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Sensitivity test")
+        self.setMinimumWidth(500)
+        self.setMinimumHeight(600)
+        
+        self.vehicle_name = vehicle_name
+        self.car_params = car_params
+        self._init_ui()
+        
+    def _init_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setSpacing(15)
+        
+        # 1. Tracks to evaluate
+        group_tracks = QGroupBox("1. Tracks to evaluate")
+        group_tracks.setStyleSheet("QGroupBox { border: 1px solid #3b82f6; }")
+        layout_tracks = QVBoxLayout(group_tracks)
+        
+        scroll_tracks = QScrollArea()
+        scroll_tracks.setWidgetResizable(True)
+        scroll_tracks.setFrameShape(QScrollArea.Shape.NoFrame)
+        scroll_tracks.viewport().setStyleSheet("background: transparent;")
+        
+        container_tracks = QWidget()
+        container_tracks.setStyleSheet("background-color: #ffffff;")
+        self.layout_track_list = QVBoxLayout(container_tracks)
+        
+        self.track_checkboxes = {}
+        self._load_tracks()
+        
+        self.layout_track_list.addStretch()
+        scroll_tracks.setWidget(container_tracks)
+        layout_tracks.addWidget(scroll_tracks)
+        layout.addWidget(group_tracks)
+        
+        # 2. Parameters
+        group_params = QGroupBox("2. Parameters to calculate sensitivities")
+        group_params.setStyleSheet("QGroupBox { border: 1px solid #3b82f6; }")
+        layout_params = QGridLayout(group_params)
+        
+        layout_params.addWidget(QLabel("Select"), 0, 0)
+        layout_params.addWidget(QLabel("Parameter"), 0, 1)
+        layout_params.addWidget(QLabel("Base Value"), 0, 2)
+        
+        self.param_widgets = {}
+        
+        params_setup = [
+            ("weight", "Total weight [kg]", 280.0, 0.0, 1000.0, 1.0, 1),
+            ("wb", "Wheelbase [m]", 1.53, 0.1, 5.0, 0.01, 3),
+            ("tw", "Car track width [m]", 1.20, 0.1, 3.0, 0.01, 3),
+            ("wd", "Weight dist. front [0-1]", 0.53, 0.0, 1.0, 0.01, 2),
+            ("cogz", "CoG height [m]", 0.25, 0.0, 1.5, 0.01, 2),
+            ("cd", "Drag coefficient (CdA)", 1.83, 0.0, 10.0, 0.01, 2),
+            ("cd_drs", "CdA (DRS open)", 1.17, 0.0, 10.0, 0.01, 2),
+            ("cl", "Lift coefficient (ClA)", 5.64, 0.0, 15.0, 0.05, 2),
+            ("cl_drs", "ClA (DRS open)", 4.20, 0.0, 15.0, 0.05, 2),
+            ("cop", "Center of pressure [0-1]", 0.53, 0.0, 1.0, 0.01, 2)
+        ]
+        
+        for i, (key, label, default_val, p_min, p_max, step, decimals) in enumerate(params_setup, start=1):
+            cb_enable = QCheckBox()
+            cb_enable.setChecked(True)
+            
+            lbl_name = QLabel(label)
+            
+            val = self.car_params.get(key, default_val)
+            spin_val = QDoubleSpinBox()
+            spin_val.setRange(p_min, p_max)
+            spin_val.setSingleStep(step)
+            spin_val.setDecimals(decimals)
+            spin_val.setValue(val)
+            
+            cb_enable.toggled.connect(spin_val.setEnabled)
+            
+            layout_params.addWidget(cb_enable, i, 0, alignment=Qt.AlignmentFlag.AlignCenter)
+            layout_params.addWidget(lbl_name, i, 1)
+            layout_params.addWidget(spin_val, i, 2)
+            
+            self.param_widgets[key] = {"enable": cb_enable, "value": spin_val}
+            
+        layout.addWidget(group_params)
+        
+        btn_layout = QHBoxLayout()
+        self.btn_close = QPushButton("Close")
+        self.btn_close.clicked.connect(self.reject)
+        
+        self.btn_run = QPushButton("Run")
+        self.btn_run.setObjectName("BtnSensitivity")
+        self.btn_run.clicked.connect(self.on_run_clicked)
+        
+        btn_layout.addStretch()
+        btn_layout.addWidget(self.btn_close)
+        btn_layout.addWidget(self.btn_run)
+        layout.addLayout(btn_layout)
+
+    def _load_tracks(self):
+        track_dir = "data/tracks"
+        if os.path.exists(track_dir):
+            files = glob.glob(os.path.join(track_dir, "*npz"))
+            track_names = sorted([os.path.splitext(os.path.basename(f))[0] for f in files])
+            for t_name in track_names:
+                cb = QCheckBox(t_name)
+                self.layout_track_list.addWidget(cb)
+                self.track_checkboxes[t_name] = cb
+        else:
+            cb = QCheckBox("No tracks found")
+            cb.setEnabled(False)
+            self.layout_track_list.addWidget(cb)
+
+    def on_run_clicked(self):
+        selected = [n for n, cb in self.track_checkboxes.items() if cb.isChecked()]
+        if not selected:
+            QMessageBox.warning(self, "Warning", "Please select at least one track.")
+            return
+
+        # implement
+        pass
+
+--- KONEC SOUBORU: src\ui\sensitivity_dialog.py ---
+
 --- ZAČÁTEK SOUBORU: src\ui\style_manager.py ---
 import os
 
@@ -7373,7 +8788,7 @@ class StyleManager:
         return """
             /* --- ZÁKLADNÍ OKNA A TEXTY --- */
             QMainWindow, QDialog {
-                background-color: #f8f9fa; /* Změněno na čistší světlou z ResultsWindow */
+                background-color: #f8f9fa; 
                 font-family: 'Segoe UI', system-ui, sans-serif;
                 color: #334155;
             }
@@ -7383,7 +8798,7 @@ class StyleManager:
                 font-weight: 500;
             }
             
-            /* --- ZÁLOŽKY (TABS) --- */
+            /* tabs */
             QTabWidget::pane {
                 border: 1px solid #e2e8f0;
                 background-color: #ffffff;
@@ -7411,7 +8826,7 @@ class StyleManager:
                 color: #0f172a;
             }
 
-            /* --- KONTEJNERY A BOXY --- */
+            /* boxes */
             QGroupBox {
                 background-color: #ffffff;
                 border: 1px solid #3b82f6;
@@ -7430,7 +8845,7 @@ class StyleManager:
                 color: #64748b;
             }
             
-            /* Speciální šedý GroupBox z ResultsWindow */
+    
             QGroupBox#HighlightedGroup {
                 background-color: #f1f5f9; 
                 border: 1px solid #cbd5e1;
@@ -7445,7 +8860,7 @@ class StyleManager:
                 border-radius: 8px;
             }
 
-            /* --- VSTUPY A COMBOBOXY --- */
+      
             QComboBox, QDoubleSpinBox, QLineEdit {
                 background-color: #ffffff;
                 border: 1px solid #cbd5e1;
@@ -7504,7 +8919,6 @@ class StyleManager:
             QCheckBox::indicator:hover { border-color: #94a3b8; }
             QCheckBox::indicator:checked { background-color: #3b82f6; border-color: #3b82f6; }
 
-            /* --- OBECNÁ TLAČÍTKA --- */
             QPushButton {
                 font-family: 'Segoe UI', system-ui, sans-serif;
                 font-size: 10pt;
@@ -7513,37 +8927,102 @@ class StyleManager:
                 padding: 10px 15px;
                 border: none;
                 color: white;
-                background-color: #64748b; 
             }
-            QPushButton:hover { background-color: #475569; }
-            QPushButton:disabled { background-color: #cbd5e1; color: #94a3b8; }
 
-            /* Specifická tlačítka podle ID */
-            QPushButton#BtnConfig { background-color: #475569; }
-            QPushButton#BtnConfig:hover { background-color: #334155; }
-            QPushButton#BtnCreateTrack { background-color: #8b5cf6; }
-            QPushButton#BtnCreateTrack:hover { background-color: #7c3aed; }
-            QPushButton#BtnCompare { background-color: #3b82f6; }
-            QPushButton#BtnCompare:hover { background-color: #2563eb; }
-            QPushButton#BtnRunSingle { background-color: #10b981; }
-            QPushButton#BtnRunSingle:hover { background-color: #059669; }
-            QPushButton#BtnEndurance { background-color: #06b6d4; }
-            QPushButton#BtnEndurance:hover { background-color: #0891b2; }
-            QPushButton#BtnLapMap { background-color: #64748b; }
-            QPushButton#BtnLapMap:hover { background-color: #475569; }
-            QPushButton#BtnOptimize { background-color: #0c43e8; }
-            QPushButton#BtnOptimize:hover { background-color: #20059c; }
-            
-            QPushButton#BtnTool {
-                background-color: #e2e8f0;
-                color: #334155;
-                font-weight: bold;
-                font-size: 14pt;
-                border-radius: 5px;
-                border: 1px solid #cbd5e1;
-                padding: 5px;
+            /* Default */
+            QPushButton {
+                background-color: #64748B;
             }
-            QPushButton#BtnTool:hover { background-color: #cbd5e1; }
+            QPushButton:hover {
+                background-color: #475569;
+            }
+
+            QPushButton:disabled {
+                background-color: #CBD5E1;
+                color: #94A3B8;
+            }
+
+            /* Config (neutral) */
+            QPushButton#BtnConfig {
+                background-color: #475569;
+            }
+            QPushButton#BtnConfig:hover {
+                background-color: #334155;
+            }
+
+            /* Track creation (creative action) */
+            QPushButton#BtnCreateTrack {
+                background-color: #6366F1;
+            }
+            QPushButton#BtnCreateTrack:hover {
+                background-color: #4F46E5;
+            }
+
+            /* Compare (analysis) */
+            QPushButton#BtnCompare {
+                background-color: #3B82F6;
+            }
+            QPushButton#BtnCompare:hover {
+                background-color: #2563EB;
+            }
+
+            /* Run simulation */
+            QPushButton#BtnRunSingle {
+                background-color: #10B981;
+            }
+            QPushButton#BtnRunSingle:hover {
+                background-color: #059669;
+            }
+
+            /* Endurance run */
+            QPushButton#BtnEndurance {
+                background-color: #0EA5A4;
+            }
+            QPushButton#BtnEndurance:hover {
+                background-color: #0F766E;
+            }
+
+            /* Map utility */
+            QPushButton#BtnLapMap {
+                background-color: #64748B;
+            }
+            QPushButton#BtnLapMap:hover {
+                background-color: #475569;
+            }
+
+            /* Heavy computation */
+            QPushButton#BtnOptimize {
+                background-color: #3B82F6;
+            }
+            QPushButton#BtnOptimize:hover {
+                background-color: #2563EB;
+            }
+
+            /* Sensitivity analysis */
+            QPushButton#BtnSensitivity {
+                background-color: #4F46E5;
+            }
+            QPushButton#BtnSensitivity:hover {
+                background-color: #4338CA;
+            }
+
+            /* Tool buttons */
+            QPushButton#BtnTool {
+                background-color: #F1F5F9;
+                color: #334155;
+                font-weight: 600;
+                font-size: 12pt;
+                border-radius: 6px;
+                border: 1px solid #CBD5E1;
+                padding: 6px;
+            }
+
+            QPushButton#BtnTool:hover {
+                background-color: #E2E8F0;
+            }
+
+         
+            
 
             /* --- DIALOGY A SCROLLBARY --- */
             QMessageBox, QInputDialog { background-color: #f1f5f9; }
@@ -7616,6 +9095,52 @@ class StyleManager:
             QSlider::handle:vertical:hover {
                 background: #eff6ff;
                 border: 2px solid #2563eb;
+            }
+
+            /* --- TABULKY (QTableWidget) --- */
+            QTableWidget {
+                background-color: #ffffff;
+                color: #0f172a; /* Vynucená tmavá barva textu v buňkách */
+                gridline-color: #e2e8f0; /* Barva mřížky */
+                border: 1px solid #cbd5e1;
+                border-radius: 6px;
+                outline: none; /* Odstraní tečkovaný rámeček při focusu */
+            }
+            QTableWidget::item {
+                padding: 4px 8px;
+                color: #0f172a; /* Pojistka pro text buněk */
+                border-bottom: 1px solid #f1f5f9;
+            }
+            QTableWidget::item:selected {
+                background-color: #eff6ff; /* Jemná světle modrá pro výběr */
+                color: #1d4ed8; /* Tmavě modrý text pro vybraný řádek */
+                font-weight: 500;
+            }
+            
+            /* --- HLAVIČKY TABULEK (QHeaderView) --- */
+            QHeaderView {
+                background-color: #ffffff;
+                border: none;
+            }
+            QHeaderView::section {
+                background-color: #f8fafc; /* Velmi světle šedá pro hlavičky */
+                color: #475569; /* Tmavě šedá pro text hlavičky */
+                font-weight: bold;
+                padding: 6px 10px;
+                border: none;
+                border-bottom: 2px solid #cbd5e1;
+                border-right: 1px solid #e2e8f0;
+            }
+            QHeaderView::section:last {
+                border-right: none;
+            }
+            
+            /* Levý horní roh tabulky (pokud jsou zobrazená čísla řádků) */
+            QTableCornerButton::section {
+                background-color: #f8fafc;
+                border: none;
+                border-bottom: 2px solid #cbd5e1;
+                border-right: 1px solid #e2e8f0;
             }
         """
 --- KONEC SOUBORU: src\ui\style_manager.py ---
