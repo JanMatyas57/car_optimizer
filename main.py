@@ -14,6 +14,7 @@ from src.handlers.controller import SimulationController
 from src.optimization.work_thread import SimulationWorker
 from src.handlers.requests import StrategyOptRequest, DeploymentOptRequest
 from src.ui.optimization_results_dialog import OptimizationResultsDialog
+from src.ui.sensitivity_results_dialog import SensitivityResultsDialog
 
 class SimulationApp:
     def __init__(self):
@@ -136,6 +137,10 @@ class SimulationApp:
 
         elif kind == "optimization":
             win = OptimizationResultsDialog(payload=data, parent=self.main_window)
+            win.show()
+
+        elif kind == "sensitivity_analysis":
+            win = SensitivityResultsDialog(payload=payload, parent=self.main_window)
             win.show()
                 
         elif kind == "track_generation":

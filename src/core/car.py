@@ -1,6 +1,123 @@
-from dataclasses import dataclass,field
+from dataclasses import dataclass, field
+from typing import Optional
 import numpy as np
 import casadi as ca
+
+
+@dataclass
+class BatteryModel:
+    """
+    2RC equivalent-circuit battery model loaded from a .npz file.
+
+    Cell parameters (EP85 or similar):
+      - Q      : cell capacity [Ah]
+      - eta    : coulombic efficiency [-]
+      - OCV    : open-circuit voltage vs SoC (interpolant over 101 pts)
+      - R0     : ohmic resistance vs SoC  (24 pts)
+      - R1,R2  : RC branch resistances vs SoC
+      - tau1, tau2 : RC time constants vs SoC [s]
+
+    Pack topology is captured by n_series and n_parallel so that
+    cell-level quantities can be converted to pack quantities:
+        U_pack   = n_series  * U_cell
+        I_cell   = I_pack    / n_parallel
+        Q_pack   = n_parallel * Q_cell   [Ah]
+    """
+
+    # ---- raw data ----
+    Q: float                    # cell capacity [Ah]
+    eta: float                  # coulombic efficiency [-]
+    ocv_soc: np.ndarray         # OCV SoC breakpoints (101,) ascending
+    ocv_u: np.ndarray           # OCV voltage values   (101,) [V/cell]
+    soc_axis: np.ndarray        # parameter SoC breakpoints (24,) ascending
+    R0: np.ndarray              # ohmic resistance    (24,) [Ohm]
+    R1: np.ndarray              # RC1 resistance      (24,) [Ohm]
+    R2: np.ndarray              # RC2 resistance      (24,) [Ohm]
+    tau1: np.ndarray            # RC1 time const      (24,) [s]
+    tau2: np.ndarray            # RC2 time const      (24,) [s]
+
+    # ---- pack topology (S series per stack, P parallel, N stacks) ----
+    n_series: int = 1           # total cells in series  = S * N
+    n_parallel: int = 1         # total cells in parallel = P
+
+    # ---- CasADi interpolants (built lazily) ----
+    interp_OCV:  object = field(default=None, repr=False)
+    interp_R0:   object = field(default=None, repr=False)
+    interp_R1:   object = field(default=None, repr=False)
+    interp_R2:   object = field(default=None, repr=False)
+    interp_tau1: object = field(default=None, repr=False)
+    interp_tau2: object = field(default=None, repr=False)
+
+    # ------------------------------------------------------------------
+    # Factory
+    # ------------------------------------------------------------------
+    @staticmethod
+    def from_npz(path: str, n_series: int = 135, n_parallel: int = 2) -> 'BatteryModel':
+        """
+        Load battery model from a .npz file.
+
+        Expected keys: Q, eta, OCV_SOC, OCV_U, R0, R1, R2, tau1, tau2,
+                       Param_SoC_axis
+
+        Pack defaults for CTU26: S=15, P=2, N=9  →  n_series=135, n_parallel=2.
+        """
+        data = np.load(path)
+
+        soc_axis_raw = data['Param_SoC_axis'].flatten().astype(float)
+        sort_idx = np.argsort(soc_axis_raw)
+        soc_axis = soc_axis_raw[sort_idx]
+
+        def sorted_param(key):
+            return data[key].flatten().astype(float)[sort_idx]
+
+        return BatteryModel(
+            Q          = float(data['Q']),
+            eta        = float(data['eta']),
+            ocv_soc    = data['OCV_SOC'].flatten().astype(float),
+            ocv_u      = data['OCV_U'].flatten().astype(float),
+            soc_axis   = soc_axis,
+            R0         = sorted_param('R0'),
+            R1         = sorted_param('R1'),
+            R2         = sorted_param('R2'),
+            tau1       = sorted_param('tau1'),
+            tau2       = sorted_param('tau2'),
+            n_series   = n_series,
+            n_parallel = n_parallel,
+        )
+
+    # ------------------------------------------------------------------
+    # Build interpolants
+    # ------------------------------------------------------------------
+    def build_interpolants(self):
+        """Build CasADi bspline interpolants from pre-sorted SoC axes."""
+        ocv_soc = self.ocv_soc.tolist()
+        soc_ax  = self.soc_axis.tolist()
+
+        self.interp_OCV  = ca.interpolant('OCV',  'bspline', [ocv_soc], self.ocv_u.tolist())
+        self.interp_R0   = ca.interpolant('R0',   'bspline', [soc_ax],  self.R0.tolist())
+        self.interp_R1   = ca.interpolant('R1',   'bspline', [soc_ax],  self.R1.tolist())
+        self.interp_R2   = ca.interpolant('R2',   'bspline', [soc_ax],  self.R2.tolist())
+        self.interp_tau1 = ca.interpolant('tau1', 'bspline', [soc_ax],  self.tau1.tolist())
+        self.interp_tau2 = ca.interpolant('tau2', 'bspline', [soc_ax],  self.tau2.tolist())
+
+    # ------------------------------------------------------------------
+    # CasADi-compatible evaluation helpers
+    # ------------------------------------------------------------------
+    def OCV(self, soc):
+        """OCV [V/cell] at given SoC, compatible with CasADi or numpy."""
+        return self.interp_OCV(soc)
+
+    def get_R0(self, soc):   return self.interp_R0(soc)
+    def get_R1(self, soc):   return self.interp_R1(soc)
+    def get_R2(self, soc):   return self.interp_R2(soc)
+    def get_tau1(self, soc): return self.interp_tau1(soc)
+    def get_tau2(self, soc): return self.interp_tau2(soc)
+
+    @property
+    def Q_pack_Ah(self) -> float:
+        """Total pack capacity [Ah]."""
+        return self.Q * self.n_parallel
+
 
 
 @dataclass
@@ -24,9 +141,11 @@ class Car:
     cogz: float   # [m] height of center of gravity
     i: float     #car gear ratio
     M_max: float  #max torque of the car [Nm]
+    rotating_mass: float = 0.0  # [kg] equivalent rotating inertia (wheels, drivetrain, reduced to translation)
     energy_limit: float = None  # [kWh] 
     performance_delta: float = 0.0 # [-] performance modifier for strategy optimization, dont change
 
+    battery: Optional['BatteryModel'] = field(default=None, repr=False)  # 2RC cell model
 
     model_type: str = "mass_point"
 
@@ -165,6 +284,23 @@ class Car:
         return c_alpha
     
     
+    # ------------------------------------------------------------------
+    # Battery model loader
+    # ------------------------------------------------------------------
+    def load_battery(self, npz_path: str, n_series: int = 135, n_parallel: int = 2):
+        """
+        Load a 2RC battery model from a .npz file and attach it to this Car.
+
+        Pack topology for CTU26: S=15, P=2, N=9  →  n_series=135, n_parallel=2.
+        After loading, CasADi interpolants are built immediately.
+        """
+        self.battery = BatteryModel.from_npz(npz_path, n_series=n_series, n_parallel=n_parallel)
+        self.battery.build_interpolants()
+        print(f"Battery model loaded: Q_cell={self.battery.Q:.4f} Ah, "
+              f"eta={self.battery.eta:.4f}, "
+              f"pack={n_series}s{n_parallel}p, "
+              f"Q_pack={self.battery.Q_pack_Ah:.2f} Ah")
+
     def update_regen_usage(self, base_drift=-0.0015, sigma=0.02):
     
         noise = np.random.normal(0.0, sigma)

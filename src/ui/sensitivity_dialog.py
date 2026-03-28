@@ -117,10 +117,27 @@ class SensitivityDialog(QDialog):
             self.layout_track_list.addWidget(cb)
 
     def on_run_clicked(self):
-        selected = [n for n, cb in self.track_checkboxes.items() if cb.isChecked()]
-        if not selected:
+        selected_tracks = [n for n, cb in self.track_checkboxes.items() if cb.isChecked()]
+        if not selected_tracks:
             QMessageBox.warning(self, "Warning", "Please select at least one track.")
             return
 
-        # implement
-        pass
+        parameters = {}
+        for key, widgets in self.param_widgets.items():
+            if widgets["enable"].isChecked():
+                # For now step size is fixed to 1%
+                parameters[key] = {"dx": 0.01}
+                
+        if not parameters:
+            QMessageBox.warning(self, "Warning", "Please select at least one parameter.")
+            return
+            
+        self.accept()
+        # Return true and data so the caller can trigger the request
+        self.result_data = {
+            "track_names": selected_tracks,
+            "parameters": parameters
+        }
+
+    def get_request_data(self):
+        return getattr(self, "result_data", None)

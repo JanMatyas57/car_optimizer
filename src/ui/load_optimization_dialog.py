@@ -13,7 +13,7 @@ class LoadOptimizationDialog(QDialog):
         layout = QVBoxLayout(self)
         
         self.table = QTableWidget(0, 4)
-        self.table.setHorizontalHeaderLabels(["Date", "Base Vehicle", "Tracks", "Best Lap Time"])
+        self.table.setHorizontalHeaderLabels(["Date", "Base Vehicle", "Tracks", "Best objective"])
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
@@ -54,16 +54,24 @@ class LoadOptimizationDialog(QDialog):
                         date_str = meta.get("timestamp", filename)
                         vehicle = meta.get("base_vehicle_name", "N/A")
                         tracks = ", ".join(meta.get("tracks_used", []))
-                        best_time = f"{meta.get('best_lap_time', 0):.3f} s"
+                        # Handle both old format (best_lap_time) and new normalized format (best_objective)
+                        raw = meta.get('best_objective', meta.get('best_lap_time'))
+                        if raw is not None and raw < 10:  # new normalized format (ratio ~1.0)
+                            improvement_pct = (1.0 - raw) * 100.0
+                            display_str = f"{raw:.5f}  ({improvement_pct:+.2f}%)"
+                        elif raw is not None:  # old format (absolute seconds)
+                            display_str = f"{raw:.3f} s (legacy)"
+                        else:
+                            display_str = "N/A"
                         
                         self.table.insertRow(row)
                         self.table.setItem(row, 0, QTableWidgetItem(date_str))
                         self.table.setItem(row, 1, QTableWidgetItem(vehicle))
                         self.table.setItem(row, 2, QTableWidgetItem(tracks))
                   
-                        time_item = QTableWidgetItem(best_time)
-                        time_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-                        self.table.setItem(row, 3, time_item)
+                        obj_item = QTableWidgetItem(display_str)
+                        obj_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+                        self.table.setItem(row, 3, obj_item)
                         
                         self.files_map[row] = filepath
                         row += 1

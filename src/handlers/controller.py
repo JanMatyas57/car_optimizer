@@ -6,13 +6,13 @@ from src.optimization.solvers import InitConditions, calculate_initial_guess
 from src.optimization.work_thread import SimulationWorker
 
 # import tasks
-from src.optimization.tasks import SingleLapTask, LaptimeMapTask, StrategyOptTask, DeploymentOptTask, TrackGenerationTask, OptimizationTask
+from src.optimization.tasks import SingleLapTask, LaptimeMapTask, StrategyOptTask, DeploymentOptTask, TrackGenerationTask, OptimizationTask, LaptimeSensitivityTask
 
 
 # import requests
 from src.handlers.requests import (
     SingleLapRequest, EnduranceRequest, LapMapTestRequest, 
-    StrategyOptRequest, DeploymentOptRequest, TrackGenerationRequest, OptimizationRequest
+    StrategyOptRequest, DeploymentOptRequest, TrackGenerationRequest, OptimizationRequest, SensitivityRequest
 )
 
 class SimulationController(QObject):
@@ -27,13 +27,29 @@ class SimulationController(QObject):
         self.active_worker = None
 
     def _create_solver(self, car: Car, track: Track, laps: int):
-       
-        if car.model_type == "mass_point_rk4":
+        import os
+
+        if car.model_type in ("mass_point_rk4", "mass_point") or car.model_type not in ("quasi_steady",):
+            # Look for cell_model.npz next to the vehicle JSON files
+            vehicles_dir = os.path.join(
+                os.path.dirname(__file__),   # src/handlers/
+                "..", "core", "vehicles"
+            )
+            npz_path = os.path.normpath(os.path.join(vehicles_dir, "cell_model.npz"))
+
+            if os.path.isfile(npz_path):
+                car.load_battery(npz_path)   # n_series=135, n_parallel=2 are defaults
+            else:
+                print(f"[Controller] No cell_model.npz found at {npz_path}, running without 2RC model.")
+
             return MassPointSolver(car, track)
+
         elif car.model_type == "quasi_steady":
             return QuasiSteadySolver(car, track)
+
         else:
             return MassPointSolver(car, track)
+
 
     def handle_request(self, req):
         # single entry point for all incoming simulation requests
@@ -58,9 +74,9 @@ class SimulationController(QObject):
 
             elif isinstance(req, LapMapTestRequest):
                 track = Track.load(req.track_name)
-                #we use strictly the mass point solver since it can limit energy
-                solver = MassPointSolver(car, track)
+                solver = self._create_solver(car, track, laps=req.laps)
                 task = LaptimeMapTask(solver, car, track, req.ds, req.laps)
+
 
             elif isinstance(req, TrackGenerationRequest):
                 # track generation task doesnt use the car object
@@ -69,14 +85,30 @@ class SimulationController(QObject):
                 )
             
             elif isinstance(req, OptimizationRequest):
-                # Zde nevytváříme 'car' a 'solver' přímo v kontroleru, 
-                # protože to za nás udělá OptimizationTask pro každý trial.
+                
                 task = OptimizationTask(
                     car_params=req.car_params,
                     ds=req.ds,
                     vehicle_name=req.vehicle_name,
                     tracks=req.tracks,
-                    bounds=req.bounds
+                    track_weights=req.track_weights,
+                    bounds=req.bounds,
+                    trials=req.trials
+                )
+
+            elif isinstance(req, SensitivityRequest):
+                tracks = [Track.load(t_name) for t_name in req.track_names]
+                # Pass the solver class, not the instance, because the task needs to instantiate multiple solvers 
+                # for different variations of the car
+                
+                solver_class = QuasiSteadySolver
+                    
+                task = LaptimeSensitivityTask(
+                    solver_class=solver_class,
+                    car=car,
+                    tracks=tracks,
+                    ds=req.ds,
+                    parameters=req.parameters
                 )
 
             elif isinstance(req, (StrategyOptRequest, DeploymentOptRequest)):

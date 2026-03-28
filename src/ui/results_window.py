@@ -513,6 +513,7 @@ class ResultsWindow(QWidget):
         raw = self.res.sens
         self.scenario_data = {
             'Weight (m)': {'val': self.car.weight, 'sens': raw.get('dTime_dm', 0.0), 'unit': 'kg'},
+            'Rotating mass': {'val': self.car.rotating_mass, 'sens': raw.get('dTime_dRm', 0.0), 'unit': 'kg'},
             'Drag (Cd)': {'val': self.car.cd, 'sens': raw.get('dTime_dCdA', 0.0), 'unit': '-'},
             'Downforce (Cl)': {'val': self.car.cl, 'sens': raw.get('dTime_dCL', 0.0), 'unit': '-'}
         }
@@ -682,23 +683,108 @@ class ResultsWindow(QWidget):
         self.tabs.addTab(widget, "DRS Map")
 
     def init_soc_tab(self):
-        if self.res.SoC is None: return
+        if self.res.SoC is None:
+            return
 
         widget = QWidget()
         layout = QVBoxLayout()
         layout.setContentsMargins(15, 15, 15, 15)
-        
+        layout.setSpacing(12)
+
+        # ── SoC ──────────────────────────────────────────────────────────────
         plot_soc = pg.PlotWidget()
         self._style_plot(plot_soc, "Battery State of Charge", "SoC", "%")
-        
+
         s_plot = self.res.s[:len(self.res.SoC)]
-        soc_curve = plot_soc.plot(s_plot, self.res.SoC, pen=pg.mkPen(self.C_SIM, width=3), name="SoC")
-        
+        soc_curve = plot_soc.plot(s_plot, self.res.SoC,
+                                  pen=pg.mkPen(self.C_SIM, width=3))
+
         dummy_zero = pg.PlotCurveItem(s_plot, np.zeros_like(s_plot), pen=None)
         fill_color = pg.mkColor(self.C_SIM)
         fill_color.setAlpha(30)
-        plot_soc.addItem(pg.FillBetweenItem(soc_curve, dummy_zero, brush=fill_color))
-        
+        plot_soc.addItem(pg.FillBetweenItem(soc_curve, dummy_zero,
+                                            brush=fill_color))
+
         layout.addWidget(plot_soc)
+
+        # ── 2RC model plots (only when battery model was active) ─────────────
+        has_battery = (
+            self.res.U_terminal is not None
+            and self.res.I_cell is not None
+            and self.car.battery is not None
+        )
+
+        if has_battery:
+            bat = self.car.battery
+            # s-axis for per-step quantities (N points, not N+1)
+            s_steps = self.res.s[:-1]
+
+            # --- Terminal voltage (pack) ---
+            U_t = np.asarray(self.res.U_terminal)
+
+            plot_u = pg.PlotWidget()
+            self._style_plot(plot_u, "Terminal voltage", "Voltage", "V")
+            plot_u.setXLink(plot_soc)
+
+            legend_u = plot_u.addLegend(
+                offset=(20, 20),
+                pen=pg.mkPen('#e2e8f0'),
+                brush=pg.mkBrush('#ffffffEE'),
+            )
+            legend_u.setLabelTextColor('#0f172a')
+
+            plot_u.plot(s_steps, U_t,
+                        pen=pg.mkPen(self.C_ENERGY, width=2.5),
+                        name="U_terminal")
+
+            # OCV pack for reference
+            ocv_pack = np.asarray(
+                [float(bat.OCV(float(soc / 100.0))) * bat.n_series
+                 for soc in self.res.SoC]   # SoC is already N points (same as s_steps)
+            )
+
+            plot_u.plot(s_steps, ocv_pack,
+                        pen=pg.mkPen(self.C_REF, width=1.5,
+                                     style=Qt.PenStyle.DashLine),
+                        name="OCV (pack)")
+
+            layout.addWidget(plot_u)
+
+            # --- Per-stack current ---
+            # I_cell  [A/cell], pack current = I_cell * n_parallel
+            # n_series stacks are in series  → each stack carries pack current
+            # so  I_stack = I_cell * n_parallel   (same for every stack)
+            I_cell = np.asarray(self.res.I_cell)
+            I_stack = I_cell * bat.n_parallel   # [A] per stack
+
+            plot_i = pg.PlotWidget()
+            self._style_plot(plot_i, "Current", "Current", "A")
+            plot_i.setXLink(plot_soc)
+
+            legend_i = plot_i.addLegend(
+                offset=(20, 20),
+                pen=pg.mkPen('#e2e8f0'),
+                brush=pg.mkBrush('#ffffffEE'),
+            )
+            legend_i.setLabelTextColor('#0f172a')
+
+            # zero reference line
+            plot_i.addItem(
+                pg.InfiniteLine(pos=0, angle=0,
+                                pen=pg.mkPen('#94a3b8', width=1))
+            )
+
+            I_pos = np.where(I_stack >= 0, I_stack, 0.0)  # discharge
+            I_neg = np.where(I_stack <  0, I_stack, 0.0)  # regen / charge
+
+            plot_i.plot(s_steps, I_pos,
+                        pen=pg.mkPen(self.C_ACC, width=2.5),
+                        name="Discharge")
+            plot_i.plot(s_steps, I_neg,
+                        pen=pg.mkPen(self.C_REGEN, width=2.5),
+                        name="Regen")
+
+            layout.addWidget(plot_i)
+
         widget.setLayout(layout)
         self.tabs.addTab(widget, "Battery")

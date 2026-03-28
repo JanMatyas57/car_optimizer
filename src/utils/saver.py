@@ -16,7 +16,7 @@ def save_results_to_npz(filepath, res, track, ds, car=None):
     if car is not None:
         
         target_keys = [
-            "weight", "cd", "cd_drs", "cl", "cl_drs", 
+            "weight", "rotating_mass", "cd", "cd_drs", "cl", "cl_drs", 
             "cop", "power_max", "regen_eff",
             "model_type", "energy_limit", "drs_allowed", "soc_start","name"
         ]

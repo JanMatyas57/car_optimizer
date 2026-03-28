@@ -49,6 +49,7 @@ class MainWindow(QMainWindow):
         self.default_params = {
             "acp_capacity": 6.0,  #
             "weight": 280.0,
+            "rotating_mass": 22.0,    # [kg] equivalent rotating inertia
             "wb": 1.53,           # wheelbase
             "tw": 1.25,           # track width
             "wd": 0.53,           # weight distribution
@@ -305,8 +306,8 @@ class MainWindow(QMainWindow):
         # 4. energy limit
         self.check_energy_limit = QCheckBox("Enable energy limit")
         self.input_limit_e = QDoubleSpinBox()
-        self.input_limit_e.setRange(0.1, 100.0)
-        self.input_limit_e.setSingleStep(0.01)
+        self.input_limit_e.setRange(0.01, 10.0)
+        self.input_limit_e.setSingleStep(0.001)
         self.input_limit_e.setSuffix(" kWh")
         self.check_energy_limit.toggled.connect(self.input_limit_e.setEnabled)
         layout.addRow(self.check_energy_limit, self.input_limit_e)
@@ -548,7 +549,9 @@ class MainWindow(QMainWindow):
                 ds=self.input_ds.value(), 
                 vehicle_name=opt_data["vehicle_name"],
                 tracks=opt_data["tracks"],
-                bounds=opt_data["bounds"]
+                track_weights=opt_data["track_weights"],
+                bounds=opt_data["bounds"],
+                trials=opt_data["trials"]
             )
             
             
@@ -556,8 +559,18 @@ class MainWindow(QMainWindow):
 
     def on_sensitivity_test_clicked(self):
         from src.ui.sensitivity_dialog import SensitivityDialog
+        from src.handlers.requests import SensitivityRequest
         dialog = SensitivityDialog(self.current_vehicle_name, self.car_params, self)
-        dialog.exec()
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            req_data = dialog.get_request_data()
+            if req_data:
+                req = SensitivityRequest(
+                    car_params=self._get_car_params(),
+                    ds=self.input_ds.value(),
+                    track_names=req_data["track_names"],
+                    parameters=req_data["parameters"]
+                )
+                self.controller.handle_request(req)
 
     def on_compare_clicked(self):
         self.openCompareRequested.emit()
@@ -697,12 +710,14 @@ class CarConfigDialog(QDialog):
         group_chassis.setStyleSheet(blue_border_style)
         form_chassis = QFormLayout()
         self.spin_weight = self._create_double_spinbox(0, 1000, 280.0, decimals=1)
+        self.spin_rotating_mass = self._create_double_spinbox(0, 200, 22.0, decimals=1)
         self.spin_wb = self._create_double_spinbox(0.1, 5.0, 1.53, decimals=3)
         self.spin_tw = self._create_double_spinbox(0.1, 3.0, 1.20, decimals=3)
         self.spin_wd = self._create_double_spinbox(0.0, 1.0, 0.53, step=0.01)
         self.spin_cogz = self._create_double_spinbox(0.0, 1.5, 0.25, step=0.01)
 
         form_chassis.addRow("Total weight [kg]:", self.spin_weight)
+        form_chassis.addRow("Rotating mass equiv. [kg]:", self.spin_rotating_mass)
         form_chassis.addRow("Wheelbase [m]:", self.spin_wb)
         form_chassis.addRow("Track width [m]:", self.spin_tw)
         form_chassis.addRow("Weight distribution (front) [0-1]:", self.spin_wd)
@@ -775,6 +790,7 @@ class CarConfigDialog(QDialog):
         p = self.params
         self.edit_name.setText(p.get("name", "New Vehicle"))
         self.spin_weight.setValue(p.get("weight", 280.0))
+        self.spin_rotating_mass.setValue(p.get("rotating_mass", 22.0))
         self.spin_wb.setValue(p.get("wb", 1.53))
         self.spin_tw.setValue(p.get("tw", 1.20))
         self.spin_wd.setValue(p.get("wd", 0.53))
@@ -795,6 +811,7 @@ class CarConfigDialog(QDialog):
         new_params.update({
             "name": self.edit_name.text(),
             "weight": self.spin_weight.value(),
+            "rotating_mass": self.spin_rotating_mass.value(),
             "wb": self.spin_wb.value(),
             "tw": self.spin_tw.value(),
             "wd": self.spin_wd.value(),

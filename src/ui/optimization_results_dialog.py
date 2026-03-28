@@ -131,7 +131,7 @@ class OptimizationResultsDialog(QDialog):
             
             meta = self.json_data.get('metadata', {})
             self.base_vehicle_name = meta.get('base_vehicle_name', 'Unknown')
-            self.best_lap_time = meta.get('best_lap_time', 0.0)
+            self.best_lap_time = meta.get('best_objective', meta.get('best_lap_time', 0.0))
             self.tracks = meta.get('tracks_used', [])
             
             self.best_params = self.json_data.get('best_params', {})
@@ -191,7 +191,9 @@ class OptimizationResultsDialog(QDialog):
         summary = QGroupBox(f"Optimization summary (Base: {self.base_vehicle_name})")
         s_layout = QVBoxLayout(summary)
         
-        lbl_time = QLabel(f"<b>Best total time:</b> {self.best_lap_time:.3f} s")
+        improvement_pct = (1.0 - self.best_lap_time) * 100.0
+        sign = "+" if improvement_pct >= 0 else "-"
+        lbl_time = QLabel(f"<b>Best objective:</b> {self.best_lap_time:.5f} &nbsp;&nbsp; (<b>{sign}{abs(improvement_pct):.2f}%</b> vs baseline)")
         lbl_time.setStyleSheet("font-size: 14pt; color: #10b981;")
         s_layout.addWidget(lbl_time)
         
@@ -248,7 +250,8 @@ class OptimizationResultsDialog(QDialog):
                 "timestamp": timestamp,
                 "base_vehicle_name": self.base_vehicle_name,
                 "tracks_used": self.tracks,
-                "best_lap_time": self.best_lap_time
+                "best_objective": self.best_lap_time,
+                "improvement_pct": (1.0 - self.best_lap_time) * 100.0
             },
             "base_car_params": self.base_car_params,
             "best_params": self.best_params,
@@ -266,7 +269,7 @@ class OptimizationResultsDialog(QDialog):
         widget = QWidget()
         layout = QVBoxLayout(widget)
         plot = pg.PlotWidget()
-        self._style_plot(plot, "Optimization history", "Objective value (Lap Time)", "Trial number", "s")
+        self._style_plot(plot, "Optimization history", "Objective function (normalized)", "Trial number")
         plot.addItem(pg.ScatterPlotItem(x=self.trials, y=self.values, size=10, pen=pg.mkPen(None), brush=pg.mkBrush(self.C_SIM + '88')))
         plot.plot(self.trials, self.best_values, pen=pg.mkPen(self.C_BEST, width=3), name="Best Value")
         layout.addWidget(plot)
@@ -433,7 +436,7 @@ class OptimizationResultsDialog(QDialog):
             self.gp_mean_curve.hide()
             self.gp_fill.hide()
 
-        self._style_plot(self.plot_slice, f"Slice: {x_name} (Showing {len(filtered_df)} trials)", "Lap Time", x_name, "s")
+        self._style_plot(self.plot_slice, f"Slice: {x_name} (Showing {len(filtered_df)} trials)", "Objective function (normalized)", x_name)
 
     def update_sensitivity_plot(self):
         if not getattr(self, 'gp_fitted', False):

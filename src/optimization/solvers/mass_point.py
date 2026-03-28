@@ -9,7 +9,7 @@ class MassPointSolver(BaseSolver):
 
         super().__init__(car, track)
 
-    def solve(self, init_cond: InitConditions, init_guess=None, ds=0.5):
+    def solve(self, init_cond: InitConditions, init_guess=None, end_v= None,ds=0.5):
 
         opti = ca.Opti()
 
@@ -19,12 +19,14 @@ class MassPointSolver(BaseSolver):
         p_weight = opti.parameter()
         p_cl   = opti.parameter()
         p_cd   = opti.parameter()
+        p_rotating_mass = opti.parameter()
      
 
         # Set params values
         opti.set_value(p_weight, self.car.weight)
         opti.set_value(p_cl,   self.car.cl)
         opti.set_value(p_cd,   self.car.cd)
+        opti.set_value(p_rotating_mass, self.car.rotating_mass)
 
 
         # =========================
@@ -44,7 +46,14 @@ class MassPointSolver(BaseSolver):
         v = opti.variable(N + 1)   # speed [m/s]
         T = opti.variable(N + 1)   # time [s]
         E = opti.variable(N + 1)   # energy used [kWh]
-        
+
+        bat = self.car.battery  # may be None
+
+        if bat is not None:
+            SoC_state = opti.variable(N + 1)   # SoC from ODE  [-]
+            U1        = opti.variable(N + 1)   # RC1 voltage   [V/cell]
+            U2        = opti.variable(N + 1)   # RC2 voltage   [V/cell]
+
         # =========================
         # Inputs
         # =========================
@@ -105,9 +114,12 @@ class MassPointSolver(BaseSolver):
         term_lat  = (F_lat    / F_max_y)**2
         opti.subject_to(term_long + term_lat <= 1)
 
-        #SoC
+        #SoC (algebraic, always kept for existing power-limit lookup)
         E_left = self.car.acp_capacity - E[:-1]
-        SoC = E_left/self.car.acp_capacity
+        SoC_algebraic = E_left / self.car.acp_capacity
+
+        # Choose which SoC expression feeds the power-limit lookup
+        SoC = SoC_state[:-1] if bat is not None else SoC_algebraic
 
         # Recuperation limit at given SoC
         recuperation_max = self.car.get_recuperation_limit(SoC)
@@ -119,35 +131,80 @@ class MassPointSolver(BaseSolver):
         opti.subject_to(F_brake/self.car.brake_max <= 1)
 
   
-        # rk4 integration
-       
+        # =========================
+        # Integration
+        # =========================
+        # Vehicle dynamics (v, T, E) use RK4.
+        # Battery states (SoC, U1, U2) use Euler forward — they are slowly varying
+        # and Euler avoids calling bspline interpolants at 4 intermediate points
+        # per RK4 stage, which would blow up the symbolic graph size.
+
         def get_derivatives(v_val):
-            
+            """Vehicle dynamics derivatives only (used in RK4)."""
             f_drag_step = Car.get_aero_drag(self.car, v_val, cd=cd_eff)
             f_net_step = F_long_k - f_drag_step
-            acc_step = f_net_step / p_weight
+            m_eff = p_weight + p_rotating_mass
+            acc_step = f_net_step / m_eff
             
             dv_ds = acc_step / v_val
             dT_ds = 1.0 / v_val
-            
             dE_ds = (F_acc / self.car.power_eff - (-F_brake_regen * self.car.regen_eff * 0.9)) / 3.6e6
-            
+
             return dv_ds, dT_ds, dE_ds
 
-        
+        # RK4 for vehicle dynamics (same for both battery / no-battery)
         k1_v, k1_T, k1_E = get_derivatives(v_k)
         k2_v, k2_T, k2_E = get_derivatives(v_k + 0.5 * ds * k1_v)
         k3_v, k3_T, k3_E = get_derivatives(v_k + 0.5 * ds * k2_v)
         k4_v, k4_T, k4_E = get_derivatives(v_k + ds * k3_v)
 
-       
-        v_next = v_k + (ds / 6.0) * (k1_v + 2*k2_v + 2*k3_v + k4_v)
+        v_next = v_k    + (ds / 6.0) * (k1_v + 2*k2_v + 2*k3_v + k4_v)
         T_next = T[:-1] + (ds / 6.0) * (k1_T + 2*k2_T + 2*k3_T + k4_T)
         E_next = E[:-1] + (ds / 6.0) * (k1_E + 2*k2_E + 2*k3_E + k4_E)
 
         opti.subject_to(v[1:] == v_next)
         opti.subject_to(T[1:] == T_next)
         opti.subject_to(E[1:] == E_next)
+
+        # Euler forward for battery states (only when 2RC model is active)
+        if bat is not None:
+            U1_k = U1[:-1]
+            U2_k = U2[:-1]
+
+            # Cell current estimation (Option A: use OCV as terminal voltage)
+            P_pack_k = (F_acc * v_k) / self.car.power_eff \
+                     - (-F_brake_regen * v_k) * self.car.regen_eff
+            OCV_k    = bat.OCV(SoC)                                            # [V/cell]
+            I_cell_k = P_pack_k / (bat.n_series * bat.n_parallel * OCV_k)      # [A/cell]
+
+            # Lookup RC parameters at step-start SoC (one evaluation per step)
+            R1_k   = bat.get_R1(SoC)
+            R2_k   = bat.get_R2(SoC)
+            tau1_k = bat.get_tau1(SoC)
+            tau2_k = bat.get_tau2(SoC)
+
+            # SoC derivative (path domain)
+            dSoC_ds = (-bat.eta * I_cell_k / (bat.Q_pack_Ah * 3600.0)) / v_k
+
+            # RC voltage derivatives (path domain)
+            dU1_ds = (-U1_k / tau1_k + I_cell_k * R1_k / tau1_k) / v_k
+            dU2_ds = (-U2_k / tau2_k + I_cell_k * R2_k / tau2_k) / v_k
+
+            # Euler step
+            opti.subject_to(SoC_state[1:] == SoC + ds * dSoC_ds)
+            opti.subject_to(U1[1:]        == U1_k + ds * dU1_ds)
+            opti.subject_to(U2[1:]        == U2_k + ds * dU2_ds)
+
+            # Bounds on RC voltages to help solver convergence
+            opti.subject_to(opti.bounded(-2, U1, 2))
+            opti.subject_to(opti.bounded(-2, U2, 2))
+
+            # Minimum cell voltage constraint: U_cell >= 3.0 V
+            R0_k = bat.get_R0(SoC)
+            U_cell_k = OCV_k - I_cell_k * R0_k - U1_k - U2_k
+            opti.subject_to(U_cell_k >= 3.3)
+
+
 
         # =========================
         # Torque limit (30 Nm per wheel)
@@ -164,8 +221,8 @@ class MassPointSolver(BaseSolver):
         P_out = (F_acc * v_k) / self.car.power_eff
 
         # Limit from SoC (dynamic)
-        P_max_dynamic = self.car.soc_to_power_interp(SoC)
-        opti.subject_to(P_out <= P_max_dynamic)
+        #P_max_dynamic = self.car.soc_to_power_interp(SoC)
+        #opti.subject_to(P_out <= P_max_dynamic)
 
         # Hard limit
         opti.subject_to(P_out <= self.car.power_max)
@@ -184,6 +241,11 @@ class MassPointSolver(BaseSolver):
         opti.subject_to(E[0] == init_cond.E)
         
         opti.subject_to(drs[0] == 0)  # start with DRS closed
+
+        if bat is not None:
+            opti.subject_to(SoC_state[0] == self.car.soc_start)
+            opti.subject_to(U1[0] == 0.0)   # RC voltages relaxed at start
+            opti.subject_to(U2[0] == 0.0)
 
         # =========================
         # Energy limitation
@@ -212,11 +274,20 @@ class MassPointSolver(BaseSolver):
         if init_guess is not None:
             opti.set_initial(v, 0.9*init_guess['v'])
             opti.set_initial(F_acc, 0.9*init_guess['F_acc'])
-           
-            
+            if bat is not None:
+                opti.set_initial(SoC_state, self.car.soc_start)
+                opti.set_initial(U1, 0.0)
+                opti.set_initial(U2, 0.0)
         else:
             opti.set_initial(v, 15.0)
             opti.set_initial(F_acc, 100.0)
+            if bat is not None:
+                opti.set_initial(SoC_state, self.car.soc_start)
+                opti.set_initial(U1, 0.0)
+                opti.set_initial(U2, 0.0)
+
+        if end_v is not None:
+            opti.subject_to(v[N] == end_v)
 
         # =========================
         # Solver setup
@@ -237,12 +308,36 @@ class MassPointSolver(BaseSolver):
             sens_w   = sol.value(ca.jacobian(L, p_weight))
             sens_cl  = sol.value(ca.jacobian(L, p_cl))
             sens_cd  = sol.value(ca.jacobian(L, p_cd))
+            sens_r_m = sol.value(ca.jacobian(L, p_rotating_mass))
          
 
             print("sensitivity results")
             print(f"Weight: {sens_w:+.4f} s/kg")
             print(f"CL:   {sens_cl:+.4f} s/unit")
             print(f"CdA:  {sens_cd:+.4f} s/unit")
+            print(f"Rotating mass: {sens_r_m:+.4f} s/kg")
+
+            if bat is not None:
+                # Extract battery results from solved values (numpy, not symbolic)
+                SoC_solved = sol.value(SoC)
+                U1_solved  = sol.value(U1)
+                U2_solved  = sol.value(U2)
+                I_solved   = sol.value(I_cell_k)
+
+                # Terminal voltage: Ut = n_s*(OCV - I*R0 - U1 - U2)
+                import numpy as np_solve
+                OCV_solved = np_solve.array([float(bat.OCV(s)) for s in SoC_solved])
+                R0_solved  = np_solve.array([float(bat.get_R0(s)) for s in SoC_solved])
+                U_t_solved = bat.n_series * (OCV_solved - I_solved * R0_solved - U1_solved[:-1] - U2_solved[:-1])
+
+                bat_results = dict(
+                    U1=U1_solved,
+                    U2=U2_solved,
+                    U_terminal=U_t_solved,
+                    I_cell=I_solved,
+                )
+            else:
+                bat_results = dict(U1=None, U2=None, U_terminal=None, I_cell=None)
 
             return SolverResults(
                 success=True,
@@ -260,7 +355,9 @@ class MassPointSolver(BaseSolver):
                     "dTime_dm": sens_w,
                     "dTime_dCL": sens_cl,
                     "dTime_dCdA": sens_cd,
-                }
+                    "dTime_dRm": sens_r_m,
+                },
+                **bat_results,
             )
 
         except RuntimeError as e:

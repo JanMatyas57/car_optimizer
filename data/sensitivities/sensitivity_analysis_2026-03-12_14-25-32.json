@@ -1,0 +1,28 @@
+{
+    "metadata": {
+        "timestamp": "2026-03-12_14-25-32",
+        "type": "Sensitivity Analysis",
+        "tracks": [
+            "FSA"
+        ]
+    },
+    "parameters": {
+        "weight": {
+            "dx": 0.01
+        }
+    },
+    "results": {
+        "FSA": {
+            "weight": {
+                "base_value": 279.9999999999984,
+                "val_plus": 282.7999999999984,
+                "t_plus": 63.462396654008,
+                "val_minus": 277.1999999999984,
+                "t_minus": 63.19462438013313,
+                "sensitivity": 0.047816477477656154,
+                "time_diff_per_dx": 0.13388613693743778,
+                "dx_rel": 0.01
+            }
+        }
+    }
+}

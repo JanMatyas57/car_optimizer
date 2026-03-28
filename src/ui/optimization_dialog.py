@@ -34,6 +34,16 @@ class OptimizationDialog(QDialog):
             
         layout_car.addWidget(QLabel("Select base vehicle profile:"))
         layout_car.addWidget(self.combo_vehicle)
+        
+        layout_car.addSpacing(20)
+        layout_car.addWidget(QLabel("Trials:"))
+        self.spin_trials = QDoubleSpinBox()
+        self.spin_trials.setDecimals(0)
+        self.spin_trials.setRange(1.0, 10000.0)
+        self.spin_trials.setValue(100.0)
+        self.spin_trials.setSingleStep(10.0)
+        layout_car.addWidget(self.spin_trials)
+        
         layout.addWidget(group_car)
         
       
@@ -51,6 +61,7 @@ class OptimizationDialog(QDialog):
         self.layout_track_list = QVBoxLayout(container_tracks)
         
         self.track_checkboxes = {}
+        self.track_weights = {}
         self._load_tracks()
         
         self.layout_track_list.addStretch()
@@ -132,9 +143,27 @@ class OptimizationDialog(QDialog):
             files = glob.glob(os.path.join(track_dir, "*npz"))
             track_names = sorted([os.path.splitext(os.path.basename(f))[0] for f in files])
             for t_name in track_names:
+                row_layout = QHBoxLayout()
+                
                 cb = QCheckBox(t_name)
-                self.layout_track_list.addWidget(cb)
+                
+                spin_weight = QDoubleSpinBox()
+                spin_weight.setRange(0.01, 100.0)
+                spin_weight.setValue(1.0)
+                spin_weight.setSingleStep(0.1)
+                spin_weight.setSuffix(" (Weight)")
+                
+                # Only enable weight input if track is selected
+                cb.toggled.connect(spin_weight.setEnabled)
+                spin_weight.setEnabled(cb.isChecked())
+                
+                row_layout.addWidget(cb)
+                row_layout.addStretch()
+                row_layout.addWidget(spin_weight)
+                
+                self.layout_track_list.addLayout(row_layout)
                 self.track_checkboxes[t_name] = cb
+                self.track_weights[t_name] = spin_weight
 
     def validate_and_accept(self):
     
@@ -153,6 +182,7 @@ class OptimizationDialog(QDialog):
 
     def get_optimization_data(self):
         selected_tracks = [name for name, cb in self.track_checkboxes.items() if cb.isChecked()]
+        track_weights = {name: self.track_weights[name].value() for name in selected_tracks}
         bounds = {}
         for key, widgets in self.param_widgets.items():
             if widgets["enable"].isChecked():
@@ -161,7 +191,9 @@ class OptimizationDialog(QDialog):
         return {
             "vehicle_name": self.combo_vehicle.currentText(),
             "tracks": selected_tracks,
-            "bounds": bounds
+            "track_weights": track_weights,
+            "bounds": bounds,
+            "trials": int(self.spin_trials.value())
         }
     
     def load_previous_run(self):

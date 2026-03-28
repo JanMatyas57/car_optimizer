@@ -29,6 +29,12 @@ class SolverResults:
     alpha_r: np.ndarray = field(default_factory=lambda: np.array([]))  # Slip angle rear
     SoC: np.ndarray = field(default_factory=lambda: np.array([]))
 
+    # 2RC battery model outputs (None when no battery model is loaded)
+    U1: np.ndarray = None          # RC1 voltage profile [V/cell]
+    U2: np.ndarray = None          # RC2 voltage profile [V/cell]
+    U_terminal: np.ndarray = None  # Pack terminal voltage [V]
+    I_cell: np.ndarray = None      # Cell current profile [A/cell]
+
     # Sensitivities (s/unit)
     sens: dict = field(default_factory=dict)
     #

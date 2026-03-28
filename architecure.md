@@ -1,7 +1,6 @@
-# OptiSim architecture 
+# architecture 
 
 ## 1. Class diagram
-
 
 ```mermaid
 classDiagram
@@ -13,6 +12,7 @@ classDiagram
         +handle_simulation_finished(payload)
         +handle_error(err_msg)
         +open_strategy_window(track_name)
+        +open_compare_window()
     }
 
     class MainWindow {
@@ -23,6 +23,7 @@ classDiagram
         +on_run_single_clicked()
         +on_lap_map_clicked()
         -_get_car_params() dict
+        +finish_track_generation(data)
     }
 
     %% Data Transfer Objects (DTOs)
@@ -35,11 +36,15 @@ classDiagram
     class LapMapTestRequest
     class StrategyOptRequest
     class DeploymentOptRequest
+    class TrackGenerationRequest
+    class OptimizationRequest
     
     BaseRequest <|-- SingleLapRequest
     BaseRequest <|-- EnduranceRequest
     BaseRequest <|-- LapMapTestRequest
     BaseRequest <|-- StrategyOptRequest
+    BaseRequest <|-- TrackGenerationRequest
+    BaseRequest <|-- OptimizationRequest
     StrategyOptRequest <|-- DeploymentOptRequest
 
     class SimulationController {
@@ -69,11 +74,15 @@ classDiagram
     class LaptimeMapTask
     class StrategyOptTask
     class DeploymentOptTask
+    class TrackGenerationTask
+    class OptimizationTask
     
     SimulationTask <|-- SingleLapTask
     SimulationTask <|-- LaptimeMapTask
     SimulationTask <|-- StrategyOptTask
     SimulationTask <|-- DeploymentOptTask
+    SimulationTask <|-- TrackGenerationTask
+    SimulationTask <|-- OptimizationTask
 
     class SolverPayload {
         +str kind
@@ -99,34 +108,36 @@ classDiagram
 
 
 ```mermaid
-
-
 stateDiagram-v2
     [*] --> Idle: Application waits for user
 
-    state "UI Layer (MainWindow / StrategyWindow)" as UI {
-        Idle --> ReadInput: Button click (e.g., Run Single Lap)
-        ReadInput --> CreateRequest: Create DTO (e.g., SingleLapRequest)
+    state "UI Layer (MainWindow / Dialogs)" as UI {
+        Idle --> ReadInput: Button click (e.g., Run Single Lap, Track Gen)
+        ReadInput --> CreateRequest: Create DTO (e.g., SingleLapRequest, OptimizationRequest)
         CreateRequest --> SendRequest: controller.handle_request(req)
     }
 
     state "Controller Layer (Assembly)" as Controller {
-        SendRequest --> AssembleCar: Initialize Car() from req.car_params
-        AssembleCar --> Routing: What type of Request is it?
-        Routing --> CreateSingleTask: type(req) is SingleLapRequest
-        Routing --> CreateLapMapTask: type(req) is LapMapTestRequest
-        Routing --> CreateStrategyTask: type(req) is StrategyOptRequest
-        Routing --> CreateDeploymentTask: type(req) is DeploymentOptRequest
+        SendRequest --> AssembleCar: Initialize Car() (if needed)
+        AssembleCar --> Routing: Route by Request type
+        Routing --> CreateSingleTask: SingleLapRequest
+        Routing --> CreateLapMapTask: LapMapTestRequest
+        Routing --> CreateStrategyTask: StrategyOptRequest
+        Routing --> CreateDeploymentTask: DeploymentOptRequest
+        Routing --> CreateTrackGenTask: TrackGenerationRequest
+        Routing --> CreateOptimizationTask: OptimizationRequest
         
         CreateSingleTask --> StartWorker
         CreateLapMapTask --> StartWorker
         CreateStrategyTask --> StartWorker
         CreateDeploymentTask --> StartWorker
+        CreateTrackGenTask --> StartWorker
+        CreateOptimizationTask --> StartWorker
         
         StartWorker --> active_worker.start()
     }
 
-    state "Loading (MainWindow)" as Loading {
+    state "Loading (MainWindow/Overlays)" as Loading {
         AssembleCar --> ShowLoading: emit simulationStarted()
     }
 
@@ -139,11 +150,18 @@ stateDiagram-v2
     state "Results Processing (SimulationApp)" as Results {
         CreatePayload --> Finish: emit finished(SolverPayload)
         
-        Finish --> CreateWindow: App catches signal and checks payload.kind
-        CreateWindow --> ShowWindow: App stores and shows window (Results, Sensitivity, etc.)
+        Finish --> ProcessPayload: App checks payload.kind
+        ProcessPayload --> ShowWindow: Kind is single_lap / endurance
+        ProcessPayload --> UpdateMapTab: Kind is endurance_map / endurance_deployment
+        ProcessPayload --> ShowOptDialog: Kind is optimization
+        ProcessPayload --> MainWinFinishGen: Kind is track_generation
     }
 
     ShowWindow --> Idle
+    UpdateMapTab --> Idle
+    ShowOptDialog --> Idle
+    MainWinFinishGen --> Idle
+    
     Finish --> HideLoading: UI catches signal and hides overlay
     HideLoading --> Idle
 ```

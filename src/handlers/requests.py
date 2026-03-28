@@ -49,4 +49,11 @@ class TrackGenerationRequest(BaseRequest):
 class OptimizationRequest(BaseRequest):
     vehicle_name: str
     tracks: list      
+    track_weights: dict
     bounds: dict      
+    trials: int
+
+@dataclass
+class SensitivityRequest(BaseRequest):
+    track_names: list
+    parameters: dict
