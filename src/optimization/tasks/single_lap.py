@@ -1,13 +1,15 @@
 import time
 from src.optimization.solvers.base_solver import InitConditions
+from src.optimization.solvers.init_guess import calculate_initial_guess
 from .base_task import SimulationTask, SolverPayload
 
 class SingleLapTask(SimulationTask):
-    def __init__(self, solver, car, track, ds):
+    def __init__(self, solver, car, track, ds, use_warm_start=False):
         self.solver = solver
         self.car = car
         self.track = track
         self.ds = ds
+        self.use_warm_start = use_warm_start
 
     def execute(self, progress_callback) -> SolverPayload:
         start = time.time()
@@ -17,12 +19,14 @@ class SingleLapTask(SimulationTask):
         if self.track.speed is not None:
             init_cond = InitConditions(v=self.track.speed[0], T=0.0, E=E)
         else:
-            init_cond = InitConditions(v=5, T=0.0, E=E)
+            init_cond = InitConditions(v=10, T=0.0, E=E)
 
-       # init_guess = calculate_initial_guess(self.car, self.track, init_cond, ds=self.ds)
-        
-        #ggv = self.solver.qs_car.find_GGV(delta_max=0.2, beta_max=0.07, kappa_max=0.15, tol=0.1, N=9)
-        res = self.solver.solve(init_cond, ds=self.ds, init_guess=None)
+        if self.use_warm_start:
+            init_guess = calculate_initial_guess(self.car, self.track, init_cond, ds=self.ds)
+        else:
+            init_guess = None
+
+        res = self.solver.solve(init_cond, ds=self.ds, init_guess=init_guess)
         
         end = time.time()
         print(f"Time elapsed: {end - start:.2f} s")

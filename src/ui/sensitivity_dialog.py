@@ -60,9 +60,7 @@ class SensitivityDialog(QDialog):
             ("wd", "Weight dist. front [0-1]", 0.53, 0.0, 1.0, 0.01, 2),
             ("cogz", "CoG height [m]", 0.25, 0.0, 1.5, 0.01, 2),
             ("cd", "Drag coefficient (CdA)", 1.83, 0.0, 10.0, 0.01, 2),
-            ("cd_drs", "CdA (DRS open)", 1.17, 0.0, 10.0, 0.01, 2),
             ("cl", "Lift coefficient (ClA)", 5.64, 0.0, 15.0, 0.05, 2),
-            ("cl_drs", "ClA (DRS open)", 4.20, 0.0, 15.0, 0.05, 2),
             ("cop", "Center of pressure [0-1]", 0.53, 0.0, 1.0, 0.01, 2)
         ]
         

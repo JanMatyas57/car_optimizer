@@ -26,20 +26,19 @@ class ConfigManager:
         ConfigManager._ensure_dir()
         filepath = os.path.join(ConfigManager.VEHICLE_DIR, f"{name}.json")
         
-        if not os.path.exists(filepath):
-            return default_config.copy()
+        merged_config = default_config.copy()
         
-        try:
-            with open(filepath, 'r', encoding='utf-8') as f:
-                saved_config = json.load(f)
+        if os.path.exists(filepath):
+            try:
+                with open(filepath, 'r', encoding='utf-8') as f:
+                    saved_config = json.load(f)
+                merged_config.update(saved_config)
+            except Exception as e:
+                print(f"failed to load vehicle '{name}': {e}. using defaults.")
+
+    
             
-            merged_config = default_config.copy()
-            merged_config.update(saved_config)
-            return merged_config
-            
-        except Exception as e:
-            print(f"failed to load vehicle '{name}': {e}. using defaults.")
-            return default_config.copy()
+        return merged_config
 
     @staticmethod
     def save_vehicle(name: str, config_dict: dict):
@@ -47,7 +46,8 @@ class ConfigManager:
         ConfigManager._ensure_dir()
         filepath = os.path.join(ConfigManager.VEHICLE_DIR, f"{name}.json")
         try:
+            config_to_save = config_dict.copy()
             with open(filepath, 'w', encoding='utf-8') as f:
-                json.dump(config_dict, f, indent=4)
+                json.dump(config_to_save, f, indent=4)
         except Exception as e:
             print(f"failed to save vehicle '{name}': {e}")

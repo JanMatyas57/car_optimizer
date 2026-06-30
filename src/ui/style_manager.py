@@ -3,7 +3,7 @@ import os
 class StyleManager:
     @staticmethod
     def get_global_stylesheet():
-        # 1. Vygenerování fyzických ikon
+        # 1. generate physical icons
         os.makedirs("data/icons", exist_ok=True)
         
         down_svg = "<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='#334155' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>"
@@ -14,9 +14,9 @@ class StyleManager:
         with open("data/icons/up_arrow.svg", "w", encoding="utf-8") as f:
             f.write(up_svg)
 
-        # 2. Centrální QSS
+        # 2. central stylesheet QSS
         return """
-            /* --- ZÁKLADNÍ OKNA A TEXTY --- */
+            /* --- BASE WINDOWS AND TEXTS --- */
             QMainWindow, QDialog {
                 background-color: #f8f9fa; 
                 font-family: 'Segoe UI', system-ui, sans-serif;
@@ -279,8 +279,8 @@ class StyleManager:
                 background-color: #ffffff;
             }
 
-            /* --- MODERNÍ SLIDERY (POSUVNÍKY) --- */
-            /* Horizontální slider */
+            /* --- MODERN SLIDERS --- */
+            /* Horizontal slider */
             QSlider::groove:horizontal {
                 border: 1px solid #cbd5e1;
                 height: 6px;
@@ -289,16 +289,16 @@ class StyleManager:
                 margin: 2px 0;
             }
             QSlider::sub-page:horizontal {
-                background: #3b82f6; /* Modrá výplň zleva po držátko */
+                background: #3b82f6; /* blue fill from left to handle */
                 border-radius: 3px;
                 height: 6px;
             }
             QSlider::handle:horizontal {
                 background: #ffffff;
-                border: 2px solid #3b82f6; /* Bílé kolečko s modrým okrajem */
+                border: 2px solid #3b82f6; /* white circle with blue border */
                 width: 16px;
                 height: 16px;
-                margin: -6px 0; /* Vycentrování na střed drážky */
+                margin: -6px 0; /* center on groove */
                 border-radius: 8px;
             }
             QSlider::handle:horizontal:hover {
@@ -306,7 +306,7 @@ class StyleManager:
                 border: 2px solid #2563eb;
             }
 
-            /* Vertikální slider */
+            /* Vertical slider */
             QSlider::groove:vertical {
                 border: 1px solid #cbd5e1;
                 width: 6px;
@@ -315,7 +315,7 @@ class StyleManager:
                 margin: 0 2px;
             }
             QSlider::add-page:vertical {
-                background: #3b82f6; /* Modrá výplň zdola po držátko */
+                background: #3b82f6; /* blue fill from bottom to handle */
                 border-radius: 3px;
                 width: 6px;
             }
@@ -324,7 +324,7 @@ class StyleManager:
                 border: 2px solid #3b82f6;
                 height: 16px;
                 width: 16px;
-                margin: 0 -6px; /* Vycentrování na střed drážky */
+                margin: 0 -6px; /* center on groove */
                 border-radius: 8px;
             }
             QSlider::handle:vertical:hover {
@@ -332,34 +332,34 @@ class StyleManager:
                 border: 2px solid #2563eb;
             }
 
-            /* --- TABULKY (QTableWidget) --- */
+            /* --- TABLES (QTableWidget) --- */
             QTableWidget {
                 background-color: #ffffff;
-                color: #0f172a; /* Vynucená tmavá barva textu v buňkách */
-                gridline-color: #e2e8f0; /* Barva mřížky */
+                color: #0f172a; /* dark text color in cells */
+                gridline-color: #e2e8f0; /* gridline color */
                 border: 1px solid #cbd5e1;
                 border-radius: 6px;
-                outline: none; /* Odstraní tečkovaný rámeček při focusu */
+                outline: none; /* remove dotted border on focus */
             }
             QTableWidget::item {
                 padding: 4px 8px;
-                color: #0f172a; /* Pojistka pro text buněk */
+                color: #0f172a; /* cell text color protection */
                 border-bottom: 1px solid #f1f5f9;
             }
             QTableWidget::item:selected {
-                background-color: #eff6ff; /* Jemná světle modrá pro výběr */
-                color: #1d4ed8; /* Tmavě modrý text pro vybraný řádek */
+                background-color: #eff6ff; /* light blue selection */
+                color: #1d4ed8; /* dark blue text for selected row */
                 font-weight: 500;
             }
             
-            /* --- HLAVIČKY TABULEK (QHeaderView) --- */
+            /* --- TABLE HEADERS (QHeaderView) --- */
             QHeaderView {
                 background-color: #ffffff;
                 border: none;
             }
             QHeaderView::section {
-                background-color: #f8fafc; /* Velmi světle šedá pro hlavičky */
-                color: #475569; /* Tmavě šedá pro text hlavičky */
+                background-color: #f8fafc; /* light gray for headers */
+                color: #475569; /* dark gray for header text */
                 font-weight: bold;
                 padding: 6px 10px;
                 border: none;

@@ -7,18 +7,18 @@ import casadi as ca
 @dataclass
 class BatteryModel:
     """
-    2RC equivalent-circuit battery model loaded from a .npz file.
-
-    Cell parameters (EP85 or similar):
+    2RC equivalent circuit battery model loaded from a .npz file.
+`
+    Cell parameters:
       - Q      : cell capacity [Ah]
       - eta    : coulombic efficiency [-]
-      - OCV    : open-circuit voltage vs SoC (interpolant over 101 pts)
-      - R0     : ohmic resistance vs SoC  (24 pts)
+      - OCV    : open circuit voltage vs SoC 
+      - R0     : ohmic resistance vs SoC 
       - R1,R2  : RC branch resistances vs SoC
-      - tau1, tau2 : RC time constants vs SoC [s]
+      - tau1, tau2 : RC time constants vs SoC
 
     Pack topology is captured by n_series and n_parallel so that
-    cell-level quantities can be converted to pack quantities:
+    cell level quantities can be converted to pack quantities:
         U_pack   = n_series  * U_cell
         I_cell   = I_pack    / n_parallel
         Q_pack   = n_parallel * Q_cell   [Ah]
@@ -27,20 +27,23 @@ class BatteryModel:
     # ---- raw data ----
     Q: float                    # cell capacity [Ah]
     eta: float                  # coulombic efficiency [-]
-    ocv_soc: np.ndarray         # OCV SoC breakpoints (101,) ascending
-    ocv_u: np.ndarray           # OCV voltage values   (101,) [V/cell]
-    soc_axis: np.ndarray        # parameter SoC breakpoints (24,) ascending
-    R0: np.ndarray              # ohmic resistance    (24,) [Ohm]
-    R1: np.ndarray              # RC1 resistance      (24,) [Ohm]
-    R2: np.ndarray              # RC2 resistance      (24,) [Ohm]
-    tau1: np.ndarray            # RC1 time const      (24,) [s]
-    tau2: np.ndarray            # RC2 time const      (24,) [s]
+    ocv_soc: np.ndarray         # OCV SoC, ascending
+    ocv_u: np.ndarray           # OCV voltage values, [V/cell]
+    soc_axis: np.ndarray        # parameter SoC breakpoints, ascending
+    R0: np.ndarray              # ohmic resistance, [Ohm]
+    R1: np.ndarray              # RC1 resistance, [Ohm]
+    R2: np.ndarray              # RC2 resistance, [Ohm]
+    tau1: np.ndarray            # RC1 time const,  [s]
+    tau2: np.ndarray            # RC2 time const, [s]
 
-    # ---- pack topology (S series per stack, P parallel, N stacks) ----
+    # pack topology (S series per stack, P parallel, N stacks)
     n_series: int = 1           # total cells in series  = S * N
     n_parallel: int = 1         # total cells in parallel = P
 
-    # ---- CasADi interpolants (built lazily) ----
+    #  voltage limit
+    max_cell_voltage: float = 4.45  # [V] upper cell voltage for optimal control mode
+
+   
     interp_OCV:  object = field(default=None, repr=False)
     interp_R0:   object = field(default=None, repr=False)
     interp_R1:   object = field(default=None, repr=False)
@@ -48,11 +51,9 @@ class BatteryModel:
     interp_tau1: object = field(default=None, repr=False)
     interp_tau2: object = field(default=None, repr=False)
 
-    # ------------------------------------------------------------------
-    # Factory
-    # ------------------------------------------------------------------
+ 
     @staticmethod
-    def from_npz(path: str, n_series: int = 135, n_parallel: int = 2) -> 'BatteryModel':
+    def from_npz(path: str, n_series: int = None, n_parallel: int = None, max_cell_voltage: float = None) -> 'BatteryModel':
         """
         Load battery model from a .npz file.
 
@@ -70,7 +71,15 @@ class BatteryModel:
         def sorted_param(key):
             return data[key].flatten().astype(float)[sort_idx]
 
-        return BatteryModel(
+        pack_energy_kwh = None
+        if 'pack_energy_kwh' in data:
+            pack_energy_kwh = float(data['pack_energy_kwh'].flatten()[0])
+
+        ns = n_series if n_series is not None else int(data.get('n_series', 135))
+        np_ = n_parallel if n_parallel is not None else int(data.get('n_parallel', 2))
+        v_max = max_cell_voltage if max_cell_voltage is not None else float(data.get('max_cell_voltage', 4.46))
+
+        model = BatteryModel(
             Q          = float(data['Q']),
             eta        = float(data['eta']),
             ocv_soc    = data['OCV_SOC'].flatten().astype(float),
@@ -81,30 +90,30 @@ class BatteryModel:
             R2         = sorted_param('R2'),
             tau1       = sorted_param('tau1'),
             tau2       = sorted_param('tau2'),
-            n_series   = n_series,
-            n_parallel = n_parallel,
+            n_series   = ns,
+            n_parallel = np_,
+            max_cell_voltage = v_max,
         )
+        model._pack_energy_kwh = pack_energy_kwh
+        return model
 
-    # ------------------------------------------------------------------
-    # Build interpolants
-    # ------------------------------------------------------------------
+   
     def build_interpolants(self):
-        """Build CasADi bspline interpolants from pre-sorted SoC axes."""
+      
         ocv_soc = self.ocv_soc.tolist()
         soc_ax  = self.soc_axis.tolist()
 
-        self.interp_OCV  = ca.interpolant('OCV',  'bspline', [ocv_soc], self.ocv_u.tolist())
-        self.interp_R0   = ca.interpolant('R0',   'bspline', [soc_ax],  self.R0.tolist())
-        self.interp_R1   = ca.interpolant('R1',   'bspline', [soc_ax],  self.R1.tolist())
-        self.interp_R2   = ca.interpolant('R2',   'bspline', [soc_ax],  self.R2.tolist())
-        self.interp_tau1 = ca.interpolant('tau1', 'bspline', [soc_ax],  self.tau1.tolist())
-        self.interp_tau2 = ca.interpolant('tau2', 'bspline', [soc_ax],  self.tau2.tolist())
+        opts = {"inline": False}
+        self.interp_OCV  = ca.interpolant('OCV',  'bspline', [ocv_soc], self.ocv_u.tolist(), opts)
+        self.interp_R0   = ca.interpolant('R0',   'bspline', [soc_ax],  self.R0.tolist(), opts)
+        self.interp_R1   = ca.interpolant('R1',   'bspline', [soc_ax],  self.R1.tolist(), opts)
+        self.interp_R2   = ca.interpolant('R2',   'bspline', [soc_ax],  self.R2.tolist(), opts)
+        self.interp_tau1 = ca.interpolant('tau1', 'bspline', [soc_ax],  self.tau1.tolist(), opts)
+        self.interp_tau2 = ca.interpolant('tau2', 'bspline', [soc_ax],  self.tau2.tolist(), opts)
 
-    # ------------------------------------------------------------------
-    # CasADi-compatible evaluation helpers
-    # ------------------------------------------------------------------
+
     def OCV(self, soc):
-        """OCV [V/cell] at given SoC, compatible with CasADi or numpy."""
+        """helper"""
         return self.interp_OCV(soc)
 
     def get_R0(self, soc):   return self.interp_R0(soc)
@@ -118,18 +127,26 @@ class BatteryModel:
         """Total pack capacity [Ah]."""
         return self.Q * self.n_parallel
 
+    @property
+    def energy_kwh(self) -> float:
+        """Total energy capacity of the pack in kWh, needs to be computed from simulation"""
+        if hasattr(self, '_pack_energy_kwh') and self._pack_energy_kwh is not None:
+            return self._pack_energy_kwh
+        # fall back to estimation: Q * n_series * n_parallel * mean_OCV / 1000.0
+        v_nom = np.mean(self.ocv_u)
+        return (self.Q * self.n_series * self.n_parallel * v_nom) / 1000.0
+
 
 
 @dataclass
 class Car:
-    # --- 1. Parameters from UI ---
+
     name: str
     weight: float           # [kg]
     cd: float             # drag coefficient (CdA) [m^2]
     cl: float             # lift coefficient (positive for downforce) [-]
     cd_drs: float # drag coefficient with drs closed
     cl_drs: float # drag coefficient with drs open
-    acp_capacity: float # Max usabel ACP capacity [kWh]
     drs_allowed: bool
     power_max: float # max power [W]
     regen_eff: float # [-] efficiency of regenerative braking
@@ -155,7 +172,7 @@ class Car:
 
     # Powertrain
     brake_max = 80000
-    power_eff = 0.88
+    power_eff = 0.92
     fix_drag = 230
     wheel_radius = 0.205
     brake_bias = 0.55
@@ -163,16 +180,15 @@ class Car:
     v_max = 40 #not used for max bounds of GVV calcullation
     
     #grip
-    mu_x: float = 1.25           # [-] 
-    mu_y: float = 1.25           # [-] 
+    mu_x: float = 1.25            
+    mu_y: float = 1.25          
     
 
-    #soc limitations
+    #soc limitations (lookup table)
     soc_grid_power = [0.0, 0.04, 0.08, 0.12, 0.22, 0.32, 0.42, 0.52, 0.70, 1.00,1.1]
     power_limit_W = [10e3, 14e3, 21e3, 35e3, 62e3, 79e3, 89e3, 95e3, 100e3, 100e3,100e3]
     soc_to_power_interp = ca.interpolant('soc_power', 'bspline', [soc_grid_power], power_limit_W)
 
-    
     
 
     tire_model = { 
@@ -183,8 +199,26 @@ class Car:
         "mu_y_nominal":1.22
     }
 
+    @property
+    def acp_capacity(self) -> float:
+        """Max usable ACP capacity in kWh, resolved from loaded battery model or defaulting to 6.0."""
+        if self.battery is not None:
+            return self.battery.energy_kwh
+        return 6.0
 
+    def load_battery(self, npz_path: str, battery_type: str = "ep85",
+                     n_series: int = None, n_parallel: int = None):
+        """
+        Load a 2RC battery model from a .npz file and attach it to this Car.
 
+        """
+        self.battery = BatteryModel.from_npz(npz_path, n_series=n_series, n_parallel=n_parallel)
+        self.battery.build_interpolants()
+        print(f"Battery model loaded [{battery_type}]: Q_cell={self.battery.Q:.4f} Ah, "
+              f"eta={self.battery.eta:.4f}, "
+              f"pack={self.battery.n_series}s{self.battery.n_parallel}p, "
+              f"Q_pack={self.battery.Q_pack_Ah:.2f} Ah, vmax={self.battery.max_cell_voltage:.2f} V, "
+              f"acp_capacity={self.acp_capacity:.3f} kWh")
 
     # car calculation functions 
     def get_aero_drag(self, v, cd = None):
@@ -195,18 +229,20 @@ class Car:
 
     def get_recuperation_limit(self, SoC_ca):
        
-        P_max = 40e3   
+        P_max = 60e3   
         soc_mid = 0.885 
-        k = 120.0       
+        k = 50.0       
         
         return P_max / (1.0 + ca.exp(k * (SoC_ca - soc_mid)))
     
+
     def tire_fy(self, alpha, Fz):
-            """
-            Linear tire model
-            Fy = (alpha/pi*180)/5 * Fz * tire_fyFactor
-            """
-            return (alpha * 180.0 / ca.pi) / 5.0 * Fz * self.mu_y
+        # tire lateral force calculation for single track model
+        """
+        Linear tire model
+        Fy = (alpha/pi*180)/5 * Fz * tire_fyFactor
+        """
+        return (alpha * 180.0 / ca.pi) / 5.0 * Fz * self.mu_y
     
     def split_long_forces(self, F_acc, F_brake):
         """
@@ -275,7 +311,7 @@ class Car:
         PKY4 = 7.5668
         FNOMIN = 2000  # Z tir souboru
 
-        # Pacejka vzorec pro Stiffness (bez Camberu)
+     
         # C_alpha = PKY1 * FNOMIN * sin(PKY4 * arctan(Fz / (PKY2 * FNOMIN)))
         
         term_inner = fz / (PKY2 * FNOMIN)
@@ -284,22 +320,6 @@ class Car:
         return c_alpha
     
     
-    # ------------------------------------------------------------------
-    # Battery model loader
-    # ------------------------------------------------------------------
-    def load_battery(self, npz_path: str, n_series: int = 135, n_parallel: int = 2):
-        """
-        Load a 2RC battery model from a .npz file and attach it to this Car.
-
-        Pack topology for CTU26: S=15, P=2, N=9  →  n_series=135, n_parallel=2.
-        After loading, CasADi interpolants are built immediately.
-        """
-        self.battery = BatteryModel.from_npz(npz_path, n_series=n_series, n_parallel=n_parallel)
-        self.battery.build_interpolants()
-        print(f"Battery model loaded: Q_cell={self.battery.Q:.4f} Ah, "
-              f"eta={self.battery.eta:.4f}, "
-              f"pack={n_series}s{n_parallel}p, "
-              f"Q_pack={self.battery.Q_pack_Ah:.2f} Ah")
 
     def update_regen_usage(self, base_drift=-0.0015, sigma=0.02):
     
@@ -315,7 +335,7 @@ class Car:
         mu_x_cold = self.tire_model["cold_factor"] * self.tire_model["mu_x_nominal"]
         current_base_mu_x = mu_x_cold + (self.tire_model['mu_x_nominal'] - mu_x_cold) * warmup_progress
         
-        # Y složka
+        
         mu_y_cold = self.tire_model["cold_factor"] * self.tire_model["mu_y_nominal"]
         current_base_mu_y = mu_y_cold + (self.tire_model['mu_y_nominal'] - mu_y_cold) * warmup_progress
 

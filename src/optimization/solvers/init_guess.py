@@ -3,7 +3,7 @@ import numpy as np
 from src.optimization.solvers.base_solver import InitConditions
 
 def calculate_initial_guess(car,track, init_cond: InitConditions, ds=1.0):
-        #creates warm start for the solver based on simple forward-backward integration and curve speed limits
+        #creates warm start for the solver based on simple forward backward integration and curve speed limits
        
         total_length = track.length
         N = int(np.round(total_length / ds))
@@ -14,6 +14,7 @@ def calculate_initial_guess(car,track, init_cond: InitConditions, ds=1.0):
         kappa_dm = track.get_curvature(s_sim)
         kappa = np.array(kappa_dm).flatten()
         
+        #car is nerfed from the start to not create warm start which might be unfeasible by the solver
         m = car.weight
         g = 9.81
         rho = 1.225
@@ -71,8 +72,11 @@ def calculate_initial_guess(car,track, init_cond: InitConditions, ds=1.0):
             v_fwd[k+1] = min(v_next, v_curve[k+1])
 
         # backward integration (braking)
+        # seed must be clamped to v_fwd[-1] as well: the car cannot arrive at
+        # the finish faster than the forward pass allowed, so without this
+        # the speed explodes on a long straight at the end of the lap.
         v_bwd = np.zeros(N+1)
-        v_bwd[-1] = v_curve[-1] 
+        v_bwd[-1] = min(v_curve[-1], v_fwd[-1])
         
         for k in range(N, 0, -1):
             v_curr = v_bwd[k] 

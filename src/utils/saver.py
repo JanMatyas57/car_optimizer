@@ -36,6 +36,8 @@ def save_results_to_npz(filepath, res, track, ds, car=None):
     x_aligned = f_x(res.s)
     y_aligned = f_y(res.s)
     
+    _empty = np.array([])
+
     np.savez_compressed(
         filepath,
         # main data
@@ -47,19 +49,25 @@ def save_results_to_npz(filepath, res, track, ds, car=None):
         E=res.E,
         f_acc=res.f_acc,
         f_brake=res.f_brake,
-        recuperation=getattr(res, 'recuperation', np.array([])),
-        SoC=getattr(res, 'SoC', np.array([])),
-        
+        recuperation=getattr(res, 'recuperation', _empty),
+        SoC=getattr(res, 'SoC', _empty),
+
+        # 2RC battery model outputs (empty arrays when no battery model was used)
+        U1=res.U1 if res.U1 is not None else _empty,
+        U2=res.U2 if res.U2 is not None else _empty,
+        U_terminal=res.U_terminal if res.U_terminal is not None else _empty,
+        I_cell=res.I_cell if res.I_cell is not None else _empty,
+
         # scalar values
         lap_time=res.lap_time,
-        
+
         # metadata
         track_name=str(track.name),
         ds=float(ds),
-        
-        # Zfiltrovaný JSON auta
+
+        # filtered car JSON
         car_config=car_config_str,
-        
+
         # sensitivity dictionary
         sens=sens_array
     )

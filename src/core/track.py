@@ -39,9 +39,9 @@ class Track:
             return None
             
         return {
-            's': self.s,          # Vzdálenost (Osa X reference)
-            'v': self.speed,      # Rychlost [m/s]
-            'p': self.power       # Výkon [kW]
+            's': self.s,          # x reference
+            'v': self.speed,      # speed [m/s]
+            'p': self.power       # power [kW]
         }
 
     @classmethod

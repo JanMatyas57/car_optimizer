@@ -33,39 +33,39 @@ class SimulationApp:
         self.controller.simulationError.connect(self.handle_error)
         
         # signals from main window
-        self.main_window.openStrategyRequested.connect(self.open_strategy_window)
+        self.main_window.openStrategyRequested.connect(self.open_strategy_picker)
         self.main_window.openCompareRequested.connect(self.open_compare_window)
 
     def start(self):
         self.main_window.show()
 
-    # ==========================================
+   
     # opening different windows based on user actions
-    # ==========================================
-    def open_strategy_window(self, track_name):
-        
-        
-        name = track_name + "_laptime_map"
-        tracks_dir = "data/tracks/lapmaps/"
-        filepath = os.path.join(tracks_dir, f"{name}.npz")
+  
+    def open_strategy_picker(self):
+        """Show a dialog that lists all laptime map .npz files, then open the strategy window."""
+        from src.ui.laptime_map_picker import LaptimeMapPickerDialog
 
-        if not os.path.exists(filepath):
-            QMessageBox.warning(
-                self.main_window, 
-                "Missing data", 
-                f"Laptime map '{name}.npz' not found.\nPlease generate it first using 'Generate laptime map' button."
-            )
+        lapmaps_dir = "data/tracks/lapmaps"
+        dialog = LaptimeMapPickerDialog(lapmaps_dir, parent=self.main_window)
+        if dialog.exec() != dialog.DialogCode.Accepted:
             return
-        
+
+        filepath = dialog.selected_filepath()
+        if not filepath:
+            return
+
+        self._load_strategy_window(filepath)
+
+    def _load_strategy_window(self, filepath: str):
+        """Instantiate LaptimeAppMainWindow for the given laptime map file."""
         try:
             win = LaptimeAppMainWindow(filepath)
-            
-            # get actual car params from  MainWindow
+
             car_params = self.main_window._get_car_params()
             ds = self.main_window.input_ds.value()
             laps = self.main_window.car_params["laps"]
-            
-            
+
             # connect strategy optimization button
             win.optimization_requested.connect(
                 lambda r, d, min_e, max_e, m_data: self.controller.handle_request(
@@ -77,11 +77,12 @@ class SimulationApp:
                         delta_val=d,
                         min_e_target=min_e,
                         max_e_target=max_e,
-                        map_data=m_data
+                        map_data=m_data,
+                        battery_model=self.main_window.combo_battery_model.currentData()
                     )
                 )
             )
-            
+
             # connect deployment button
             win.deployment_requested.connect(
                 lambda r, d, min_e, max_e, m_data: self.controller.handle_request(
@@ -93,7 +94,8 @@ class SimulationApp:
                         delta_val=d,
                         min_e_target=min_e,
                         max_e_target=max_e,
-                        map_data=m_data
+                        map_data=m_data,
+                        battery_model=self.main_window.combo_battery_model.currentData()
                     )
                 )
             )
@@ -102,7 +104,7 @@ class SimulationApp:
             self.controller.simulationProgress.connect(win.loading_overlay.update_progress)
             self.controller.simulationFinished.connect(win.stop_loading)
             self.controller.simulationError.connect(win.stop_loading)
-            
+
             self._register_and_show_window(win)
         except Exception as e:
             QMessageBox.critical(self.main_window, "Error", f"Could not load laptime map:\n{e}")
@@ -112,9 +114,8 @@ class SimulationApp:
         win = CompareWindow()
         self._register_and_show_window(win)
 
-    # ==========================================
     # handling the results
-    # ==========================================
+
     def handle_simulation_finished(self, payload):
         kind = payload.kind
         data = payload.data
@@ -180,3 +181,7 @@ if __name__ == "__main__":
     sim_app.start()
     
     sys.exit(app.exec())
+
+
+
+#fix the results tab

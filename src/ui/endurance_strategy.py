@@ -10,7 +10,6 @@ from PyQt6.QtGui import QGuiApplication
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg, NavigationToolbar2QT
 from matplotlib.figure import Figure
 from src.ui.loader import LoadingOverlay
-from scipy.ndimage import median_filter
 
 class MapTab(QWidget):
     def __init__(self, map_data, fixed_axis='soc', parent=None):
@@ -307,31 +306,20 @@ class LaptimeAppMainWindow(QWidget):
 
     def load_data(self, filepath):
         try:
-            data = np.load(filepath)
-            soc_targets = data['soc_targets']
-            e_targets = data['e_targets']
-            regen_targets = data['regen_targets']
-            flat_lap_times = data['flat_lap_times']
+            data = np.load(filepath, allow_pickle=True)
+            soc_targets = data['soc_grid']
+            e_targets = data['energy_grid']
+            regen_targets = data['regen_grid']
+            lap_times_3d = data['lap_times']
             
-            if 'car_config' in data:
-                car_json = data['car_config'][0]
+            if 'car_params' in data:
+                car_json = data['car_params']
+                if isinstance(car_json, np.ndarray):
+                    car_json = car_json.item()
                 self.car_config = json.loads(car_json)
             else:
                 self.car_config = None
-            
-            shape_3d = (len(soc_targets), len(e_targets), len(regen_targets))
-            lap_times_3d = flat_lap_times.reshape(shape_3d)
-            
-            # outlier filter
-            smoothed_3d = median_filter(lap_times_3d, size=3)
-            diff = np.abs(lap_times_3d - smoothed_3d)
-            outliers_mask = diff > 5.0 #
-            num_outliers = np.sum(outliers_mask)
-            
-            if num_outliers > 0:
-                print(f"[Data Load] Repaired {num_outliers} outliers via median filter.")
-                lap_times_3d[outliers_mask] = smoothed_3d[outliers_mask]
-            
+                
             flat_for_casadi = lap_times_3d.ravel(order='F')
             grid_axes = [soc_targets.tolist(), e_targets.tolist(), regen_targets.tolist()]
             interpolant = ca.interpolant('laptime_map', 'bspline', grid_axes, flat_for_casadi.tolist())
@@ -342,14 +330,17 @@ class LaptimeAppMainWindow(QWidget):
             return {
                 'interpolant': interpolant,
                 'e_fine': np.linspace(min(e_targets), max(e_targets), 50),
-                'r_fine': np.linspace(min(regen_targets), 1.0, 50),
-                'soc_fine': np.linspace(min(soc_targets), 1.0, 50),
+                'r_fine': np.linspace(min(regen_targets), max(regen_targets), 50),
+                'soc_fine': np.linspace(min(soc_targets), max(soc_targets), 50),
                 'r_min': min(regen_targets),
                 'r_max': max(regen_targets),
-                'z_min': np.nanmin(lap_times_3d),
-                'z_max': np.nanmax(lap_times_3d) 
+                'z_min': np.min(lap_times_3d),
+                'z_max': np.max(lap_times_3d),
+                'acp_capacity': self.car_config.get('acp_capacity') if self.car_config else None
             }
         except Exception as e:
+            import traceback
+            traceback.print_exc()
             QMessageBox.critical(self, "Load Error", f"Could not load map from {filepath}:\n{e}")
             return None
 
@@ -407,9 +398,12 @@ class LaptimeAppMainWindow(QWidget):
         
         layout = QVBoxLayout(dialog)
         
+        ignore_keys = {"cop", "wb", "tw", "wd", "cogz", "i", "mu_x", "mu_y"}
+        display_config = {k: v for k, v in self.car_config.items() if k not in ignore_keys}
+        
         table = QTableWidget()
         table.setColumnCount(2)
-        table.setRowCount(len(self.car_config))
+        table.setRowCount(len(display_config))
         table.setHorizontalHeaderLabels(["Parameter", "Value"])
         
         table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
@@ -433,7 +427,7 @@ class LaptimeAppMainWindow(QWidget):
             }
         """)
 
-        for row, (key, value) in enumerate(self.car_config.items()):
+        for row, (key, value) in enumerate(display_config.items()):
             item_key = QTableWidgetItem(str(key))
             item_key.setFlags(item_key.flags() & ~Qt.ItemFlag.ItemIsEditable)
             

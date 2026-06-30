@@ -1,12 +1,12 @@
 import numpy as np
 import matplotlib.pyplot as plt
 
-# parametry
+# parameters
 kappa_k = 150.0
 kappa_thr = 0.1
 kappa_max = 0.2
 
-# vstupní zakřivení
+# input curvature
 kappa_vals = np.linspace(0, 0.2, 200)
 kappa_vals = kappa_vals/kappa_max
 

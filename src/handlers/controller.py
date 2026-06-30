@@ -6,7 +6,7 @@ from src.optimization.solvers import InitConditions, calculate_initial_guess
 from src.optimization.work_thread import SimulationWorker
 
 # import tasks
-from src.optimization.tasks import SingleLapTask, LaptimeMapTask, StrategyOptTask, DeploymentOptTask, TrackGenerationTask, OptimizationTask, LaptimeSensitivityTask
+from src.optimization.tasks import SingleLapTask, StrategyOptTask, DeploymentOptTask, TrackGenerationTask, OptimizationTask, LaptimeSensitivityTask
 
 
 # import requests
@@ -26,29 +26,29 @@ class SimulationController(QObject):
         super().__init__()
         self.active_worker = None
 
-    def _create_solver(self, car: Car, track: Track, laps: int):
-        import os
+    def _create_solver(self, car: Car, track: Track, laps: int,
+                        simulate_full_battery: bool = False,
+                        soc_power_mode: str = "lookup_table",
+                        battery_model: str = "ep85"):
+        import src.optimization.solvers as solvers
+        from src.optimization.solvers import get_available_solvers
+        
+        available = get_available_solvers()
+        model_type = car.model_type
 
-        if car.model_type in ("mass_point_rk4", "mass_point") or car.model_type not in ("quasi_steady",):
-            # Look for cell_model.npz next to the vehicle JSON files
-            vehicles_dir = os.path.join(
-                os.path.dirname(__file__),   # src/handlers/
-                "..", "core", "vehicles"
-            )
-            npz_path = os.path.normpath(os.path.join(vehicles_dir, "cell_model.npz"))
-
-            if os.path.isfile(npz_path):
-                car.load_battery(npz_path)   # n_series=135, n_parallel=2 are defaults
-            else:
-                print(f"[Controller] No cell_model.npz found at {npz_path}, running without 2RC model.")
-
-            return MassPointSolver(car, track)
-
-        elif car.model_type == "quasi_steady":
-            return QuasiSteadySolver(car, track)
-
-        else:
-            return MassPointSolver(car, track)
+        solver_class = available.get(model_type)
+        if not solver_class:
+            solver_class = available.get("Mass point (Rk4)")
+            
+        solver = solver_class(car, track)
+        
+        # Apply configurations if the solver supports them
+        if hasattr(solver, 'simulate_full_battery'):
+            solver.simulate_full_battery = simulate_full_battery
+        if hasattr(solver, 'soc_power_mode'):
+            solver.soc_power_mode = soc_power_mode
+            
+        return solver
 
 
     def handle_request(self, req):
@@ -58,13 +58,34 @@ class SimulationController(QObject):
         try:
             # build the core car object shared across all requests
             car = Car(**req.car_params)
+
+            # load battery model dynamically if present on the request
+            battery_model = getattr(req, "battery_model", None)
+            if battery_model:
+                import os
+                battery_dir = os.path.normpath(os.path.join(
+                    os.path.dirname(__file__),
+                    "..", "core", "vehicles", "battery"
+                ))
+                npz_name = f"{battery_model}.npz"
+                npz_path = os.path.join(battery_dir, npz_name)
+                if os.path.isfile(npz_path):
+                    car.load_battery(npz_path, battery_type=battery_model)
+                else:
+                    print(f"[Controller] Battery file not found: {npz_path}")
+
             task = None
 
             # route logic based on the specific type of request
             if isinstance(req, SingleLapRequest):
                 track = Track.load(req.track_name)
-                solver = self._create_solver(car, track, laps=1)
-                task = SingleLapTask(solver, car, track, req.ds)
+                solver = self._create_solver(
+                    car, track, laps=1,
+                    simulate_full_battery=req.simulate_full_battery,
+                    soc_power_mode=req.soc_power_mode,
+                    battery_model=req.battery_model
+                )
+                task = SingleLapTask(solver, car, track, req.ds, use_warm_start=req.use_warm_start)
                 
             elif isinstance(req, EnduranceRequest):
                 track = Track.load(req.track_name)
@@ -74,7 +95,12 @@ class SimulationController(QObject):
 
             elif isinstance(req, LapMapTestRequest):
                 track = Track.load(req.track_name)
-                solver = self._create_solver(car, track, laps=req.laps)
+                solver = self._create_solver(
+                    car, track, laps=req.laps,
+                    simulate_full_battery=req.simulate_full_battery,
+                    soc_power_mode=req.soc_power_mode,
+                    battery_model=req.battery_model
+                )
                 task = LaptimeMapTask(solver, car, track, req.ds, req.laps)
 
 
@@ -100,11 +126,8 @@ class SimulationController(QObject):
                 tracks = [Track.load(t_name) for t_name in req.track_names]
                 # Pass the solver class, not the instance, because the task needs to instantiate multiple solvers 
                 # for different variations of the car
-                
-                solver_class = QuasiSteadySolver
-                    
                 task = LaptimeSensitivityTask(
-                    solver_class=solver_class,
+                    solver_class=QuasiSteadySolver,
                     car=car,
                     tracks=tracks,
                     ds=req.ds,
@@ -117,9 +140,11 @@ class SimulationController(QObject):
                 car.performance_delta = req.delta_val
                 
                 laptime_interpolant = req.map_data['interpolant']
+                acp_capacity = req.map_data.get('acp_capacity', None)
                 solver = StrategyMaker(
                     car, laptime_interpolant, req.laps, 
-                    req.min_e_target + 0.01, req.max_e_target - 0.01
+                    req.min_e_target + 0.01, req.max_e_target - 0.01,
+                    acp_capacity=acp_capacity
                 )
                 
                 if type(req) is StrategyOptRequest:

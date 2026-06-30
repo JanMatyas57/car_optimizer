@@ -356,11 +356,10 @@ class QS_Car:
         return df
 
 
-# ==========================================================
-# Optimization Solver Wrapper
-# ==========================================================
+
 
 class QuasiSteadySolver(BaseSolver):
+    DISPLAY_NAME = "Quasi Steady"
     def __init__(self, car, track, laps=1):
         super().__init__(car, track, laps)
         

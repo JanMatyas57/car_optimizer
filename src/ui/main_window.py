@@ -10,7 +10,7 @@ from PyQt6.QtCore import Qt, pyqtSignal
 # track for rendering
 from src.core.track import Track
 from src.core.trackGenerator import TrackGenerator
-from src.handlers.requests import SingleLapRequest, EnduranceRequest, LapMapTestRequest,OptimizationRequest
+from src.handlers.requests import SingleLapRequest, EnduranceRequest, OptimizationRequest
 from src.ui.loader import LoadingOverlay
 from src.ui.track_generator_dialog import TrackGeneratorDialog
 from src.ui.optimization_dialog import OptimizationDialog
@@ -40,14 +40,13 @@ class MplCanvas(FigureCanvasQTAgg):
 
 class MainWindow(QMainWindow):
     openCompareRequested = pyqtSignal()
-    openStrategyRequested = pyqtSignal(str)
+    openStrategyRequested = pyqtSignal()
 
     def __init__(self, controller):
         super().__init__()
         self.controller = controller
 
         self.default_params = {
-            "acp_capacity": 6.0,  #
             "weight": 280.0,
             "rotating_mass": 22.0,    # [kg] equivalent rotating inertia
             "wb": 1.53,           # wheelbase
@@ -119,11 +118,11 @@ class MainWindow(QMainWindow):
         self.left_scroll_area.setFrameShape(QScrollArea.Shape.NoFrame)
         self.left_scroll_area.setWidget(self.control_panel)
 
-        self.left_scroll_area.setFixedWidth(360) 
+        self.left_scroll_area.setFixedWidth(420) 
         
         self.init_track_section() 
         
-        self.btn_config_car = QPushButton("⚙️ Configure car parameters")
+        self.btn_config_car = QPushButton("Configure car parameters")
         self.btn_config_car.setObjectName("BtnConfig")
         self.btn_config_car.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_config_car.clicked.connect(self.open_car_config)
@@ -170,7 +169,7 @@ class MainWindow(QMainWindow):
     
         splitter.addWidget(self.left_scroll_area) 
         splitter.addWidget(self.graph_panel)
-        splitter.setSizes([360, 940])
+        splitter.setSizes([420, 880])
         self.main_layout.addWidget(splitter)
 
         #loader and styles
@@ -274,8 +273,7 @@ class MainWindow(QMainWindow):
 
         # 1. vehicle model
         self.combo_model = QComboBox()
-        self.combo_model.addItem("Mass point (Rk4)", "mass_point_rk4")
-        self.combo_model.addItem("Quasi Steady", "quasi_steady")
+        self.populate_solvers()
         layout.addRow("Vehicle model:", self.combo_model)
 
         # 2. vehicle profile selector
@@ -307,6 +305,7 @@ class MainWindow(QMainWindow):
         self.check_energy_limit = QCheckBox("Enable energy limit")
         self.input_limit_e = QDoubleSpinBox()
         self.input_limit_e.setRange(0.01, 10.0)
+        self.input_limit_e.setDecimals(3)
         self.input_limit_e.setSingleStep(0.001)
         self.input_limit_e.setSuffix(" kWh")
         self.check_energy_limit.toggled.connect(self.input_limit_e.setEnabled)
@@ -324,12 +323,74 @@ class MainWindow(QMainWindow):
         self.check_drs = QCheckBox("Enable drs")
         layout.addRow(self.check_drs)
 
+        # 7. Simulate full battery (2RC model)
+        self.check_full_battery = QCheckBox("Simulate full battery")
+        layout.addRow(self.check_full_battery)
+
+        # 8. Battery model selector
+        self.combo_battery_model = QComboBox()
+        self._populate_battery_models()
+        layout.addRow("Battery model:", self.combo_battery_model)
+
+        # 9. SoC power limitation mode
+        self.combo_soc_power_mode = QComboBox()
+        self.combo_soc_power_mode.addItem("Lookup table", "lookup_table")
+        self.combo_soc_power_mode.addItem("Optimum", "optimum")
+        self.combo_soc_power_mode.currentIndexChanged.connect(self._on_soc_power_mode_changed)
+        layout.addRow("SoC power limitation:", self.combo_soc_power_mode)
+
+        # 10. Warm start toggle
+        self.check_warm_start = QCheckBox("Use warm start")
+        self.check_warm_start.setToolTip("Compute an initial guess for the solver")
+        layout.addRow(self.check_warm_start)
+
         group.setLayout(layout)
         self.control_layout.addWidget(group)
 
+    def _populate_battery_models(self):
+       
+        import glob
+      
+        
+        self.combo_battery_model.clear()
+        
+        # Determine battery directory
+        battery_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "core", "vehicles", "battery"))
+        
+        if os.path.exists(battery_dir):
+            files = glob.glob(os.path.join(battery_dir, "*.npz"))
+            for f in files:
+                basename = os.path.basename(f)
+                model_id = os.path.splitext(basename)[0]
+                
+                try:
+                    data = np.load(f)
+                    ns = int(data.get('n_series', 0))
+                    np_val = int(data.get('n_parallel', 0))
+                    if ns > 0 and np_val > 0:
+                        label = f"{model_id} ({ns}s{np_val}p)"
+                    else:
+                        label = model_id
+                except Exception:
+                    label = model_id
+                    
+                self.combo_battery_model.addItem(label, model_id)
+        
+        if self.combo_battery_model.count() == 0:
+            self.combo_battery_model.addItem("No battery files found", None)
+
+    def populate_solvers(self):
+        from src.optimization.solvers import get_available_solvers
+        self.combo_model.clear()
+        solvers = get_available_solvers()
+        for display_name, solver_class in solvers.items():
+            self.combo_model.addItem(display_name, display_name)
+
     def _update_ui_from_params(self):
         """pushes loaded dict values into the ui widgets safely."""
-        idx = self.combo_model.findData(self.car_params.get("model_type", "mass_point"))
+        model_type = self.car_params.get("model_type", "Mass point (Rk4)")
+        
+        idx = self.combo_model.findData(model_type)
         if idx >= 0: self.combo_model.setCurrentIndex(idx)
         
         self.input_ds.setValue(self.car_params.get("ds", 0.5))
@@ -344,6 +405,19 @@ class MainWindow(QMainWindow):
         self.input_soc.setValue(soc_val * 100.0)
         
         self.check_drs.setChecked(self.car_params.get("drs_allowed", True))
+
+    def _on_full_battery_toggled(self, checked):
+        """Enable/disable battery model dropdown based on full battery checkbox."""
+        pass
+
+    def _on_soc_power_mode_changed(self):
+        """When 'Optimum' is selected, force full battery on (required for U_cell constraint)."""
+        is_optimum = self.combo_soc_power_mode.currentData() == "optimum"
+        if is_optimum:
+            self.check_full_battery.setChecked(True)
+            self.check_full_battery.setEnabled(False)
+        else:
+            self.check_full_battery.setEnabled(True)
 
     def init_run_buttons(self):
         group = QGroupBox("Run actions")
@@ -374,12 +448,6 @@ class MainWindow(QMainWindow):
         self.btn_endurance_strategy.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_endurance_strategy.clicked.connect(self.on_endurance_strategy_clicked)
         layout.addWidget(self.btn_endurance_strategy)
-
-        self.btn_acp_test = QPushButton("Generate laptime map")
-        self.btn_acp_test.setObjectName("BtnLapMap")
-        self.btn_acp_test.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_acp_test.clicked.connect(self.on_lap_map_clicked)
-        layout.addWidget(self.btn_acp_test)
 
         group.setLayout(layout)
         self.control_layout.addWidget(group)
@@ -493,14 +561,14 @@ class MainWindow(QMainWindow):
         cb = self.mpl_canvas.fig.colorbar(line, cax=cax)
         
 
-        cb.outline.set_visible(False) # Skrytí rámečku legendy
+        cb.outline.set_visible(False) # hide legend frame
         cb.set_label('Elevation [deg]', color='#64748b', size=10, labelpad=10)
         cb.ax.yaxis.set_tick_params(colors='#64748b', labelsize=9)
         
-        # Vypnutí os mapy
+        # turn off map axes
         ax.axis('off')
         
-        # Překreslení
+        # redraw
         self.mpl_canvas.draw()
   
     # ==========================================
@@ -510,22 +578,16 @@ class MainWindow(QMainWindow):
         req = SingleLapRequest(
             car_params=self._get_car_params(),
             ds=self.input_ds.value(), 
-            track_name=self.combo_track.currentText()
-        )
-        self.controller.handle_request(req)
-
-    def on_lap_map_clicked(self):
-        req = LapMapTestRequest(
-            car_params=self._get_car_params(),
-            ds=self.input_ds.value(), 
             track_name=self.combo_track.currentText(),
-            laps=self.car_params["laps"] 
+            simulate_full_battery=self.check_full_battery.isChecked(),
+            soc_power_mode=self.combo_soc_power_mode.currentData(),
+            battery_model=self.combo_battery_model.currentData(),
+            use_warm_start=self.check_warm_start.isChecked()
         )
         self.controller.handle_request(req)
 
     def on_endurance_strategy_clicked(self):
-        track_name = self.combo_track.currentText()
-        self.openStrategyRequested.emit(track_name)
+        self.openStrategyRequested.emit()
 
     def on_optimize_car_clicked(self):
       

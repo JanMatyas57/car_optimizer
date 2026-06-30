@@ -58,7 +58,7 @@ class OptimizationTask(SimulationTask):
 
     def execute(self, progress_callback=None):
 
-        # --- Baseline pre-run ---
+       
         # Simulate the base car on all tracks once to get reference times.
         # These are used to normalize each track's contribution to the objective,
         # so longer tracks don't dominate shorter ones.

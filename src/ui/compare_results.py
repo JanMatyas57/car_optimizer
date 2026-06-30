@@ -203,7 +203,7 @@ class ComparisonPlotWindow(QWidget):
         
         # --- 1. speed graph ---
         plot_v = pg.PlotWidget()
-        self._style_plot(plot_v, "Speed Telemetry", "Speed", "km/h")
+        self._style_plot(plot_v, "Speed telemetry", "Speed", "km/h")
         
         # modern legend placement
         legend = plot_v.addLegend(offset=(20, 20), pen=pg.mkPen('#e2e8f0'), brush=pg.mkBrush('#ffffffEE'))
@@ -211,7 +211,7 @@ class ComparisonPlotWindow(QWidget):
         
         # --- 2. delta time graph ---
         plot_dt = pg.PlotWidget()
-        self._style_plot(plot_dt, "Delta Time (Accumulated Gap)", "Time", "s")
+        self._style_plot(plot_dt, "Delta time (accumulated gap)", "Time", "s")
         plot_dt.setXLink(plot_v)
         
         # zero line (thin dark line)
@@ -254,6 +254,33 @@ class ComparisonPlotWindow(QWidget):
 
         layout.addWidget(plot_v)
         layout.addWidget(plot_dt)
+        
+        def get_text_dyn(x_val, plot_idx):
+            s_ref = self.ref_run['s']
+            t_ref = self.ref_run['t']
+            t_ref_val = np.interp(x_val, s_ref, t_ref) if s_ref[0] <= x_val <= s_ref[-1] else 0.0
+            
+            parts = []
+            for run in self.runs:
+                s = run['s']
+                if plot_idx == 0:
+                    v_val = np.interp(x_val, s, run['v'] * 3.6) if s[0] <= x_val <= s[-1] else 0.0
+                    parts.append(f"<b>{run['name']}</b>: {v_val:.1f} km/h")
+                else:
+                    t_run_val = np.interp(x_val, s, run['t']) if s[0] <= x_val <= s[-1] else 0.0
+                    dt_val = t_run_val - t_ref_val
+                    parts.append(f"<b>{run['name']}</b>: {dt_val:+.3f} s")
+                
+            content = "<br>".join(parts)
+            return (
+                f"<div style='background-color: rgba(255,255,255,220); border: 1px solid #cbd5e1; "
+                f"padding: 8px; border-radius: 4px; font-family: Segoe UI;'>"
+                f"<b>Dist:</b> {x_val:.1f} m<br>{content}"
+                f"</div>"
+            )
+
+        self._setup_crosshair([plot_v, plot_dt], get_text_dyn)
+
         widget.setLayout(layout)
         self.tabs.addTab(widget, "Dynamics")
 
@@ -310,6 +337,41 @@ class ComparisonPlotWindow(QWidget):
 
         layout.addWidget(plot_p)
         layout.addWidget(plot_e)
+        
+        def get_text_energy(x_val, plot_idx):
+            parts = []
+            for run in self.runs:
+                s = run['s']
+                if plot_idx == 0:
+                    min_len = min(len(run['f_acc']), len(run['v']))
+                    v = run['v'][:min_len]
+                    pwr_traction = (run['f_acc'][:min_len] * v) / 1000.0
+                    pwr_brake = (run['f_brake'][:min_len] * v) / 1000.0
+                    if 'recuperation' in run and run['recuperation'] is not None:
+                        p_regen = -(run['recuperation'][:min_len] / 1000.0)
+                    else:
+                        p_regen = np.zeros_like(v)
+                    
+                    s_pwr = s[:min_len]
+                    pt_val = np.interp(x_val, s_pwr, pwr_traction) if s_pwr[0] <= x_val <= s_pwr[-1] else 0.0
+                    pb_val = np.interp(x_val, s_pwr, pwr_brake) if s_pwr[0] <= x_val <= s_pwr[-1] else 0.0
+                    pr_val = np.interp(x_val, s_pwr, p_regen) if s_pwr[0] <= x_val <= s_pwr[-1] else 0.0
+                    total_pwr = pt_val + pb_val + pr_val
+                    parts.append(f"<b>{run['name']}</b>: {total_pwr:.1f} kW")
+                else:
+                    e_val = np.interp(x_val, s, run['E'] - run['E'][0]) if s[0] <= x_val <= s[-1] else 0.0
+                    parts.append(f"<b>{run['name']}</b>: {e_val:.2f} kWh")
+                
+            content = "<br>".join(parts)
+            return (
+                f"<div style='background-color: rgba(255,255,255,220); border: 1px solid #cbd5e1; "
+                f"padding: 8px; border-radius: 4px; font-family: Segoe UI;'>"
+                f"<b>Dist:</b> {x_val:.1f} m<br>{content}"
+                f"</div>"
+            )
+
+        self._setup_crosshair([plot_p, plot_e], get_text_energy)
+
         widget.setLayout(layout)
         self.tabs.addTab(widget, "Energy")
 
@@ -336,7 +398,7 @@ class ComparisonPlotWindow(QWidget):
         if not self.compare_candidates:
             layout.addWidget(QLabel("Need at least 2 logs to show comparison map."))
             widget.setLayout(layout)
-            self.tabs.addTab(widget, "Delta V Map")
+            self.tabs.addTab(widget, "Delta v map")
             return
 
         for run in self.compare_candidates:
@@ -363,7 +425,7 @@ class ComparisonPlotWindow(QWidget):
         layout.addWidget(canvas_container)
         
         widget.setLayout(layout)
-        self.tabs.addTab(widget, "Delta V Map")
+        self.tabs.addTab(widget, "Delta v map")
         
         # first render
         self.update_heatmap()
@@ -391,7 +453,7 @@ class ComparisonPlotWindow(QWidget):
         
         sc = ax.scatter(ref_run['x'], ref_run['y'], c=delta_v, cmap='coolwarm', s=12, norm=norm)
         
-        ax.set_title(f"Speed Delta [km/h]", pad=15, fontweight='bold', color='#0f172a')
+        ax.set_title(f"Speed delta [km/h]", pad=15, fontweight='bold', color='#0f172a')
         ax.set_aspect('equal')
         
         
@@ -489,7 +551,7 @@ class ComparisonPlotWindow(QWidget):
             run_layout.addWidget(table)
             layout.addWidget(run_container)
             
-        self.tabs.addTab(widget, "Car Configs")
+        self.tabs.addTab(widget, "Car configs")
 
     def init_soc_tab(self):
         # Only create this tab if at least one run has SoC data
@@ -521,5 +583,62 @@ class ComparisonPlotWindow(QWidget):
                     plot_soc.addItem(pg.FillBetweenItem(soc_curve, dummy_zero, brush=fill_color))
 
         layout.addWidget(plot_soc)
+        
+        def get_text_soc(x_val, plot_idx):
+            parts = []
+            for run in self.runs:
+                if run.get('SoC') is not None:
+                    s = run['s'][:len(run['SoC'])]
+                    soc_val = np.interp(x_val, s, run['SoC']) if s[0] <= x_val <= s[-1] else 0.0
+                    parts.append(f"<b>{run['name']}</b>: {soc_val:.2f} %")
+            content = "<br>".join(parts)
+            return (
+                f"<div style='background-color: rgba(255,255,255,220); border: 1px solid #cbd5e1; "
+                f"padding: 8px; border-radius: 4px; font-family: Segoe UI;'>"
+                f"<b>Dist:</b> {x_val:.1f} m<br>{content}"
+                f"</div>"
+            )
+
+        self._setup_crosshair([plot_soc], get_text_soc)
+
         widget.setLayout(layout)
         self.tabs.addTab(widget, "Battery")
+
+    def _setup_crosshair(self, plots, get_text_fn):
+        for i, plot in enumerate(plots):
+            v_line = pg.InfiniteLine(angle=90, movable=False, pen=pg.mkPen('#94a3b8', style=Qt.PenStyle.DashLine))
+            h_line = pg.InfiniteLine(angle=0, movable=False, pen=pg.mkPen('#94a3b8', style=Qt.PenStyle.DashLine))
+            cursor_label = pg.TextItem(anchor=(0, 1), color="#334155")
+            
+            plot.addItem(v_line, ignoreBounds=True)
+            plot.addItem(h_line, ignoreBounds=True)
+            plot.addItem(cursor_label, ignoreBounds=True)
+            
+            v_line.setVisible(False)
+            h_line.setVisible(False)
+            cursor_label.setVisible(False)
+            
+            def create_mouse_move(plt, vl, hl, lbl, plot_idx):
+                def on_mouse_move(pos):
+                    if plt.sceneBoundingRect().contains(pos):
+                        mouse_point = plt.plotItem.vb.mapSceneToView(pos)
+                        mx, my = mouse_point.x(), mouse_point.y()
+                        
+                        html_text = get_text_fn(mx, plot_idx)
+                        lbl.setHtml(html_text)
+                        lbl.setPos(mx, my)
+                        vl.setPos(mx)
+                        hl.setPos(my)
+                        
+                        lbl.setVisible(True)
+                        vl.setVisible(True)
+                        hl.setVisible(True)
+                    else:
+                        lbl.setVisible(False)
+                        vl.setVisible(False)
+                        hl.setVisible(False)
+                return on_mouse_move
+
+            on_move = create_mouse_move(plot, v_line, h_line, cursor_label, i)
+            plot._on_mouse_move = on_move 
+            plot.scene().sigMouseMoved.connect(on_move)

@@ -30,7 +30,7 @@ class LoadingOverlay(QWidget):
         self.lbl_gif = QLabel()
         self.lbl_gif.setAlignment(Qt.AlignmentFlag.AlignCenter)
      
-        gif_path = "data/loading1.gif" 
+        gif_path = "data/loading_gifs/vejsi_loading.gif" 
         self.movie = QMovie(gif_path)
      
         self.lbl_gif.setFixedSize(300, 300)
@@ -64,9 +64,9 @@ class LoadingOverlay(QWidget):
         """)
         
        
-        layout.addWidget(self.lbl_gif)   # GIF nahoře
-        layout.addWidget(self.lbl_text)  # Text uprostřed
-        layout.addWidget(self.progress)  # Bar dole
+        layout.addWidget(self.lbl_gif)   # GIF on top
+        layout.addWidget(self.lbl_text)  # Text in center
+        layout.addWidget(self.progress)  # Bar at bottom
         
         self.setLayout(layout)
         
@@ -86,7 +86,7 @@ class LoadingOverlay(QWidget):
             
         self.lbl_text.setText(text)
         
-        # Uložení formátu textu
+        # save text format
         if progress_text_fmt:
             self.current_progress_fmt = progress_text_fmt
         else:

@@ -8,7 +8,7 @@ from src.utils.saver import save_results_to_npz
 import os
 
 class ResultsWindow(QWidget):
-    # Moderní barevná paleta
+    #sexy color scheme
     C_SIM = '#3b82f6'     # Modrá
     C_REF = '#334155'     # Tmavě šedá
     C_DELTA = '#ef4444'   # Červená
@@ -17,10 +17,10 @@ class ResultsWindow(QWidget):
     C_REGEN = '#8b5cf6'   # Fialová
     C_ENERGY = '#f59e0b'  # Žlutá/Oranžová
 
-    def __init__(self, res, car, track, ds):
+    def __init__(self, res, car, track, ds, show_real_data=False):
         super().__init__()
 
-        # Globální vyhlazování a barvy pro hezčí grafy
+        # sexy pyqtgraph settings
         pg.setConfigOption('background', 'w')
         pg.setConfigOption('foreground', '#334155')
         pg.setConfigOptions(antialias=True)
@@ -29,6 +29,7 @@ class ResultsWindow(QWidget):
         self.car = car
         self.track = track
         self.ds = ds
+        self.show_real_data = show_real_data
 
         
         self.center_window()
@@ -107,6 +108,7 @@ class ResultsWindow(QWidget):
         self.init_dynamics_tab()
         self.init_powertrain_tab()
         self.init_forces_tab()
+        self.init_grip_tab()
         self.init_sensitivity_tab()
         self.init_map_tab()
         self.init_drs_map_tab()
@@ -123,23 +125,63 @@ class ResultsWindow(QWidget):
         self.showNormal()
 
     def _style_plot(self, plot, title, y_label, units):
-        """Pomocná metoda pro krásný čistý vzhled pyqtgraph plotů"""
+        """makes plot sexy"""
         plot.setBackground("#FFFFFF")
         plot.setTitle(title, color='#0f172a', size='12pt', bold=True)
         plot.setLabel('left', y_label, units=units, color='#64748b')
         plot.setLabel('bottom', 'Distance', units='m', color='#64748b')
         
-        
-        # Obarvení os a textu na jemnou šedou
+      
         ax_pen = pg.mkPen(color='#94a3b8', width=1)
         plot.getAxis('left').setPen(ax_pen)
         plot.getAxis('left').setTextPen('#475569')
         plot.getAxis('bottom').setPen(ax_pen)
         plot.getAxis('bottom').setTextPen('#475569')
         
-        # Jemná mřížka
+        
         plot.showGrid(x=True, y=True, alpha=0.15)
         return plot
+
+    def _add_crosshair(self, plot, y_label, y_units):
+        v_line = pg.InfiniteLine(angle=90, movable=False, pen=pg.mkPen('#94a3b8', style=Qt.PenStyle.DashLine))
+        h_line = pg.InfiniteLine(angle=0, movable=False, pen=pg.mkPen('#94a3b8', style=Qt.PenStyle.DashLine))
+        cursor_label = pg.TextItem(anchor=(0, 1), color="#334155")
+        
+        plot.addItem(v_line, ignoreBounds=True)
+        plot.addItem(h_line, ignoreBounds=True)
+        plot.addItem(cursor_label, ignoreBounds=True)
+        
+        v_line.setVisible(False)
+        h_line.setVisible(False)
+        cursor_label.setVisible(False)
+
+        def on_mouse_move(pos):
+            if plot.sceneBoundingRect().contains(pos):
+                mouse_point = plot.plotItem.vb.mapSceneToView(pos)
+                mx, my = mouse_point.x(), mouse_point.y()
+                
+                html_text = (
+                    f"<div style='background-color: rgba(255,255,255,220); border: 1px solid #cbd5e1; "
+                    f"padding: 8px; border-radius: 4px; font-family: Segoe UI;'>"
+                    f"<b>Dist:</b> {mx:.1f} m<br>"
+                    f"<b>{y_label}:</b> {my:.2f} {y_units}"
+                    f"</div>"
+                )
+                cursor_label.setHtml(html_text)
+                cursor_label.setPos(mx, my)
+                v_line.setPos(mx)
+                h_line.setPos(my)
+                
+                cursor_label.setVisible(True)
+                v_line.setVisible(True)
+                h_line.setVisible(True)
+            else:
+                cursor_label.setVisible(False)
+                v_line.setVisible(False)
+                h_line.setVisible(False)
+
+        plot._on_mouse_move = on_mouse_move
+        plot.scene().sigMouseMoved.connect(on_mouse_move)
 
     def init_summary_panel(self):
         group = QGroupBox("Lap Summary")
@@ -174,15 +216,15 @@ class ResultsWindow(QWidget):
         soc_start = self.res.SoC[0] if self.res.SoC is not None else 0.0
         soc_end = self.res.SoC[-1] if self.res.SoC is not None else 0.0
 
-        # První sloupec statistik
+        # first sloupkos
         add_stat(0, 0, "Lap Time", f"{self.res.lap_time:.3f}", "s")
         add_stat(1, 0, "Max Speed", f"{max_v:.1f}", "km/h")
         
-        # Druhý sloupec statistik
+        # second sloupkos
         add_stat(0, 3, "Energy Used", f"{total_energy:.3f}", "kWh")
         add_stat(1, 3, "Avg Speed", f"{avg_v:.1f}", "km/h")
 
-        # Třetí sloupec statistik (SoC data)
+        # third sloupkos
         add_stat(0, 6, "SoC Start", f"{soc_start:.1f}", "%")
         add_stat(1, 6, "SoC End", f"{soc_end:.1f}", "%")
         
@@ -270,51 +312,56 @@ class ResultsWindow(QWidget):
         layout.setContentsMargins(15, 15, 15, 15)
         layout.setSpacing(15)
         
-        # --- SPEED ---
+        
         plot_v = pg.PlotWidget()
-        self._style_plot(plot_v, "Velocity Comparison", "Speed", "km/h")
+        title = "Velocity comparison" if self.show_real_data else "Velocity profile"
+        self._style_plot(plot_v, title, "Speed", "km/h")
+        self._add_crosshair(plot_v, "Speed", "km/h")
         
         legend_v = plot_v.addLegend(offset=(20, 20), pen=pg.mkPen('#e2e8f0'), brush=pg.mkBrush('#ffffffEE'))
         legend_v.setLabelTextColor('#0f172a')
       
-        plot_v.plot(self.res.s, self.res.v * 3.6, pen=pg.mkPen(self.C_SIM, width=2.5), name="Simulation")
+        plot_v.plot(self.res.s, self.res.v * 3.6, pen=pg.mkPen(self.C_SIM, width=1.5), name="Simulation")
         
         val_data = None
-        if self.track.ref_data is not None:
+        if self.track.ref_data is not None and self.show_real_data:
             val_data = self.calculate_validation_metrics(self.res, self.track.ref_data)
             if val_data:
                 plot_v.plot(val_data['s'], val_data['v_ref'] * 3.6, 
-                           pen=pg.mkPen(self.C_REF, width=2, style=Qt.PenStyle.DashLine), 
+                           pen=pg.mkPen(self.C_REF, width=1.5, style=Qt.PenStyle.DashLine), 
                            name=f"Real Log (RMSE: {val_data['rmse_v']*3.6:.1f} km/h)")
 
         layout.addWidget(plot_v)
 
-        # --- DELTA TIME ---
-        plot_dt = pg.PlotWidget()
-        self._style_plot(plot_dt, "Delta Time (Accumulated Gap)", "Delta Time", "s")
-        plot_dt.setXLink(plot_v)
-        
-        plot_dt.addItem(pg.InfiniteLine(pos=0, angle=0, pen=pg.mkPen('#334155', width=1.5)))
-
-        if val_data:
-            dt_curve = plot_dt.plot(val_data['s'], val_data['delta_t'], pen=pg.mkPen(self.C_DELTA, width=2.5))
-            dummy_zero = pg.PlotCurveItem(val_data['s'], np.zeros_like(val_data['s']), pen=None)
-            plot_dt.addItem(dummy_zero)
+        if self.show_real_data:
+            # deltos timos
+            plot_dt = pg.PlotWidget()
+            self._style_plot(plot_dt, "Delta time (Accumulated Gap)", "Delta Time", "s")
+            self._add_crosshair(plot_dt, "Delta", "s")
+            plot_dt.setXLink(plot_v)
             
-            fill_color = pg.mkColor(self.C_DELTA)
-            fill_color.setAlpha(40)
-            fill = pg.FillBetweenItem(dt_curve, dummy_zero, brush=fill_color)
-            plot_dt.addItem(fill)
-            
-            diff = val_data['diff_total']
-            sign = "+" if diff > 0 else ""
-            plot_dt.setTitle(f"Delta Time (Final Gap: {sign}{diff:.3f} s)", color='#0f172a', size='12pt', bold=True)
-        else:
-            plot_dt.setTitle("No reference data available", color='#64748b')
+            plot_dt.addItem(pg.InfiniteLine(pos=0, angle=0, pen=pg.mkPen('#334155', width=1.0)))
 
-        layout.addWidget(plot_dt)
+            if val_data:
+                dt_curve = plot_dt.plot(val_data['s'], val_data['delta_t'], pen=pg.mkPen(self.C_DELTA, width=1.5))
+                dummy_zero = pg.PlotCurveItem(val_data['s'], np.zeros_like(val_data['s']), pen=None)
+                plot_dt.addItem(dummy_zero)
+                
+                fill_color = pg.mkColor(self.C_DELTA)
+                fill_color.setAlpha(40)
+                fill = pg.FillBetweenItem(dt_curve, dummy_zero, brush=fill_color)
+                plot_dt.addItem(fill)
+                
+                diff = val_data['diff_total']
+                sign = "+" if diff > 0 else ""
+                plot_dt.setTitle(f"Delta time (Final Gap: {sign}{diff:.3f} s)", color='#0f172a', size='12pt', bold=True)
+            else:
+                plot_dt.setTitle("No reference data available", color='#64748b')
+
+            layout.addWidget(plot_dt)
+            
         widget.setLayout(layout)
-        self.tabs.addTab(widget, "Dynamics")
+        self.tabs.addTab(widget, "Velocity profile")
 
     def init_powertrain_tab(self):
         widget = QWidget()
@@ -322,34 +369,35 @@ class ResultsWindow(QWidget):
         layout.setContentsMargins(15, 15, 15, 15)
         layout.setSpacing(15)
         
-        # --- POWER ---
+        # poweeeer
         v_interp = self.res.v[:-1]
         power_kw = (self.res.f_acc * v_interp) / 1000.0 
         brake_kw = (self.res.f_brake * v_interp) / 1000.0 
         
         plot_p = pg.PlotWidget()
         self._style_plot(plot_p, "Power Usage", "Power", "kW")
+        self._add_crosshair(plot_p, "Power", "kW")
         legend_p = plot_p.addLegend(offset=(20, 20), pen=pg.mkPen('#e2e8f0'), brush=pg.mkBrush('#ffffffEE'))
         legend_p.setLabelTextColor('#0f172a')
         
-        plot_p.plot(self.res.s[:-1], power_kw, pen=pg.mkPen(self.C_ACC, width=2.5), name="Traction")
-        plot_p.plot(self.res.s[:-1], brake_kw, pen=pg.mkPen(self.C_BRK, width=2.5), name="Braking")
-        plot_p.plot(self.res.s[:-1], -self.res.recuperation/1000, pen=pg.mkPen(self.C_REGEN, width=2.5), name="Recuperation")
+        plot_p.plot(self.res.s[:-1], power_kw, pen=pg.mkPen(self.C_ACC, width=1.5), name="Traction")
+        plot_p.plot(self.res.s[:-1], brake_kw, pen=pg.mkPen(self.C_BRK, width=1.5), name="Braking")
+        plot_p.plot(self.res.s[:-1], -self.res.recuperation/1000, pen=pg.mkPen(self.C_REGEN, width=1.5), name="Recuperation")
         
         # --- ENERGY ---
         dt_sim = np.diff(self.res.t)
-        pos_power_battery = np.maximum(power_kw, 0) / self.car.power_eff 
-        e_step_sim = (pos_power_battery * dt_sim) / 3600.0
+        net_power_battery = (power_kw / self.car.power_eff) - (self.res.recuperation / 1000.0 * 0.9)
+        e_step_sim = (net_power_battery * dt_sim) / 3600.0
         e_cum_sim = np.insert(np.cumsum(e_step_sim), 0, 0.0)
 
         val_data = None
         e_cum_real = None
         
-        if self.track.ref_data is not None:
+        if self.track.ref_data is not None and self.show_real_data:
             val_data = self.calculate_validation_metrics(self.res, self.track.ref_data)
             if val_data and val_data.get('p_ref') is not None:
                 p_ref_kw = val_data['p_ref'] / 1000.0 
-                plot_p.plot(val_data['s'], p_ref_kw, pen=pg.mkPen(self.C_REF, width=2, style=Qt.PenStyle.DotLine), name="Real Power")
+                plot_p.plot(val_data['s'], p_ref_kw, pen=pg.mkPen(self.C_REF, width=1.5, style=Qt.PenStyle.DotLine), name="Real Power")
                 
                 ds = np.diff(val_data['s'])
                 v_ref_safe = np.maximum(val_data['v_ref'][:-1], 1.0)
@@ -360,27 +408,28 @@ class ResultsWindow(QWidget):
                 e_cum_real = np.insert(np.cumsum(e_step_real), 0, 0.0)
 
         plot_e = pg.PlotWidget()
-        self._style_plot(plot_e, "Cumulative Energy (Discharge only)", "Energy Out", "kWh")
+        self._style_plot(plot_e, "Cumulative energy", "Energy", "kWh")
+        self._add_crosshair(plot_e, "Energy", "kWh")
         legend_e = plot_e.addLegend(offset=(20, 20), pen=pg.mkPen('#e2e8f0'), brush=pg.mkBrush('#ffffffEE'))
         legend_e.setLabelTextColor('#0f172a')
         
-        e_curve = plot_e.plot(self.res.s, e_cum_sim, pen=pg.mkPen(self.C_ENERGY, width=3), name="Sim")
+        e_curve = plot_e.plot(self.res.s, e_cum_sim, pen=pg.mkPen(self.C_ENERGY, width=2), name="Sim")
         
-        # Výplň energie
+        # filling area under the curve
         dummy_zero = pg.PlotCurveItem(self.res.s, np.zeros_like(self.res.s), pen=None)
         fill_color = pg.mkColor(self.C_ENERGY)
         fill_color.setAlpha(30)
         plot_e.addItem(pg.FillBetweenItem(e_curve, dummy_zero, brush=fill_color))
         
         if e_cum_real is not None:
-            plot_e.plot(val_data['s'], e_cum_real, pen=pg.mkPen(self.C_REF, width=2, style=Qt.PenStyle.DashLine), name="Real discharge")
+            plot_e.plot(val_data['s'], e_cum_real, pen=pg.mkPen(self.C_REF, width=1.5, style=Qt.PenStyle.DashLine), name="Real discharge")
         
         plot_e.setXLink(plot_p)
         
         layout.addWidget(plot_p)
         layout.addWidget(plot_e)
         widget.setLayout(layout)
-        self.tabs.addTab(widget, "Powertrain")
+        self.tabs.addTab(widget, "Powertrain energy")
 
     def init_forces_tab(self):
         widget = QWidget()
@@ -388,31 +437,141 @@ class ResultsWindow(QWidget):
         layout.setContentsMargins(15, 15, 15, 15)
         
         plot_f = pg.PlotWidget()
-        self._style_plot(plot_f, "Longitudinal Forces", "Force", "N")
+        self._style_plot(plot_f, "Forces", "Force", "N")
+        self._add_crosshair(plot_f, "Force", "N")
         legend_f = plot_f.addLegend(offset=(20, 20), pen=pg.mkPen('#e2e8f0'), brush=pg.mkBrush('#ffffffEE'))
         legend_f.setLabelTextColor('#0f172a')
         
-        plot_f.plot(self.res.s[:-1], self.res.f_acc, pen=pg.mkPen(self.C_ACC, width=2.5), name="Traction")
-        plot_f.plot(self.res.s[:-1], self.res.f_brake, pen=pg.mkPen(self.C_BRK, width=2.5), name="Braking")
+        plot_f.plot(self.res.s[:-1], self.res.f_acc, pen=pg.mkPen(self.C_ACC, width=1.5), name="Traction")
+        plot_f.plot(self.res.s[:-1], self.res.f_brake, pen=pg.mkPen(self.C_BRK, width=1.5), name="Braking")
+        
+        s_sim = self.res.s[:-1]
+        v_sim = self.res.v[:-1]
+        kappa = np.interp(s_sim, self.track.s, self.track.kappa)
+        f_lat = self.car.weight * (v_sim**2) * np.abs(kappa)
+        
+        plot_f.plot(self.res.s[:-1], f_lat, pen=pg.mkPen('#3b82f6', width=1.5), name="Lateral")
         
         layout.addWidget(plot_f)
         widget.setLayout(layout)
         self.tabs.addTab(widget, "Forces")
+
+    def init_grip_tab(self):
+        widget = QWidget()
+        layout = QVBoxLayout()
+        layout.setContentsMargins(20, 20, 20, 20)
+
+        canvas_container = QWidget()
+        canvas_container.setStyleSheet("background: #ffffff; border: 1px solid #e2e8f0; border-radius: 8px;")
+        canvas_layout = QVBoxLayout(canvas_container)
+        canvas_layout.setContentsMargins(5, 5, 5, 5)
+
+        self.grip_plot = pg.PlotWidget(title="Grip utilization")
+        self.grip_plot.setBackground('#ffffff')
+        self.grip_plot.setTitle("Grip utilization map", color='#0f172a', size='12pt', bold=True)
+        self.grip_plot.setAspectLocked(True)
+        self.grip_plot.hideAxis('bottom')
+        self.grip_plot.hideAxis('left')
+
+        s_sim = self.res.s[:-1]
+        x_plot = np.interp(s_sim, self.track.s, self.track.x)
+        y_plot = np.interp(s_sim, self.track.s, self.track.y)
+
+        v_sim = self.res.v[:-1]
+        kappa = np.interp(s_sim, self.track.s, self.track.kappa)
+        
+        f_long = self.res.f_acc + self.res.f_brake
+        f_lat = self.car.weight * (v_sim**2) * np.abs(kappa)
+        
+        f_aero = 0.5 * self.car.rho * self.car.cl * (v_sim**2)
+        fz = self.car.weight * self.car.g + f_aero
+        
+        f_max_x = self.car.mu_x * fz
+        f_max_y = self.car.mu_y * fz
+        
+        utilization = np.clip(np.sqrt((f_long / f_max_x)**2 + (f_lat / f_max_y)**2) * 100.0, 0, 100)
+        
+        self.grip_data = {'x': x_plot, 'y': y_plot, 'u': utilization, 's': s_sim}
+
+        pos = np.array([0.0, 0.5, 1.0])
+        color_def = np.array([
+            [16, 185, 129, 255],   # Green (Low util)
+            [245, 158, 11, 255],   # Orange (Med util)
+            [239, 68, 68, 255]     # Red (High util)
+        ], dtype=np.ubyte)
+        
+        cmap = pg.ColorMap(pos, color_def)
+        brushes = cmap.map(utilization / 100.0, mode='qcolor') 
+
+        self.grip_scatter = pg.ScatterPlotItem(x=x_plot, y=y_plot, size=8, pen=None, brush=brushes, hoverable=True, hoverSize=12)
+        self.grip_plot.addItem(self.grip_scatter)
+        
+        start_marker = pg.ScatterPlotItem(x=[x_plot[0]], y=[y_plot[0]], size=15, symbol='o', brush='#0f172a')
+        self.grip_plot.addItem(start_marker)
+
+        legend = pg.GradientLegend((20, 150), (10, 10)) 
+        legend.setGradient(cmap.getGradient())
+        legend.setLabels({"0 %": 0, "50 %": 0.5, "100 %": 1})
+        legend.labelStyle = {'color': '#334155', 'font-size': '10pt'}
+        self.grip_plot.addItem(legend)
+
+        self.grip_cursor_label = pg.TextItem(anchor=(0, 1), color="#334155") 
+        self.grip_plot.addItem(self.grip_cursor_label)
+        
+        self.grip_v_line = pg.InfiniteLine(angle=90, movable=False, pen=pg.mkPen('#94a3b8', style=Qt.PenStyle.DashLine))
+        self.grip_h_line = pg.InfiniteLine(angle=0, movable=False, pen=pg.mkPen('#94a3b8', style=Qt.PenStyle.DashLine))
+        self.grip_plot.addItem(self.grip_v_line)
+        self.grip_plot.addItem(self.grip_h_line)
+        
+        self.grip_plot.scene().sigMouseMoved.connect(self.on_grip_mouse_move)
+
+        canvas_layout.addWidget(self.grip_plot)
+        layout.addWidget(canvas_container)
+        widget.setLayout(layout)
+        self.tabs.addTab(widget, "Grip")
+
+    def on_grip_mouse_move(self, pos):
+        if self.grip_plot.sceneBoundingRect().contains(pos):
+            mouse_point = self.grip_plot.plotItem.vb.mapSceneToView(pos)
+            mx, my = mouse_point.x(), mouse_point.y()
+            
+            dists = np.sqrt((self.grip_data['x'] - mx)**2 + (self.grip_data['y'] - my)**2)
+            idx = np.argmin(dists) 
+            
+            if dists[idx] < 20.0:
+                u_val = self.grip_data['u'][idx]
+                html_text = (
+                    f"<div style='background-color: rgba(255,255,255,220); border: 1px solid #cbd5e1; padding: 8px; border-radius: 4px; font-family: Segoe UI;'>"
+                    f"<b>Dist:</b> {self.grip_data['s'][idx]:.1f} m<br>"
+                    f"<b>Util:</b> <span style='color: {'#ef4444' if u_val > 90 else '#f59e0b' if u_val > 50 else '#10b981'};'>{u_val:.1f} %</span>"
+                    f"</div>"
+                )
+                self.grip_cursor_label.setHtml(html_text)
+                self.grip_cursor_label.setPos(self.grip_data['x'][idx], self.grip_data['y'][idx])
+                self.grip_cursor_label.setVisible(True)
+                self.grip_v_line.setPos(self.grip_data['x'][idx])
+                self.grip_h_line.setPos(self.grip_data['y'][idx])
+                self.grip_v_line.setVisible(True)
+                self.grip_h_line.setVisible(True)
+            else:
+                self.grip_cursor_label.setVisible(False)
+                self.grip_v_line.setVisible(False)
+                self.grip_h_line.setVisible(False)
 
     def init_map_tab(self):
         widget = QWidget()
         layout = QVBoxLayout()
         layout.setContentsMargins(20, 20, 20, 20)
 
-        # Kontejner s bílým pozadím a zaoblením
+        # Kontejneros majsneros
         canvas_container = QWidget()
         canvas_container.setStyleSheet("background: #ffffff; border: 1px solid #e2e8f0; border-radius: 8px;")
         canvas_layout = QVBoxLayout(canvas_container)
         canvas_layout.setContentsMargins(5, 5, 5, 5)
 
-        self.map_plot = pg.PlotWidget(title="Power Map")
+        self.map_plot = pg.PlotWidget(title="Power map")
         self.map_plot.setBackground('#ffffff')
-        self.map_plot.setTitle("Power Map", color='#0f172a', size='12pt', bold=True)
+        self.map_plot.setTitle("Power map", color='#0f172a', size='12pt', bold=True)
         self.map_plot.setAspectLocked(True)
         
         # Čistá mapa - skrytí os
@@ -468,7 +627,7 @@ class ResultsWindow(QWidget):
         canvas_layout.addWidget(self.map_plot)
         layout.addWidget(canvas_container)
         widget.setLayout(layout)
-        self.tabs.addTab(widget, "Power Map")
+        self.tabs.addTab(widget, "Power map")
 
     def on_map_mouse_move(self, pos):
         if self.map_plot.sceneBoundingRect().contains(pos):
@@ -518,7 +677,7 @@ class ResultsWindow(QWidget):
             'Downforce (Cl)': {'val': self.car.cl, 'sens': raw.get('dTime_dCL', 0.0), 'unit': '-'}
         }
 
-        control_group = QGroupBox("Scenario Configuration)")
+        control_group = QGroupBox("Scenario configuration")
         
         control_group.setObjectName("HighlightedGroup")
         
@@ -647,9 +806,9 @@ class ResultsWindow(QWidget):
         canvas_layout = QVBoxLayout(canvas_container)
         canvas_layout.setContentsMargins(5, 5, 5, 5)
 
-        self.drs_plot = pg.PlotWidget(title="DRS Usage Map")
+        self.drs_plot = pg.PlotWidget(title="DRS usage map")
         self.drs_plot.setBackground('#ffffff')
-        self.drs_plot.setTitle("DRS Usage Map", color='#0f172a', size='12pt', bold=True)
+        self.drs_plot.setTitle("DRS usage map", color='#0f172a', size='12pt', bold=True)
         self.drs_plot.setAspectLocked(True)
         self.drs_plot.hideAxis('bottom')
         self.drs_plot.hideAxis('left')
@@ -680,7 +839,7 @@ class ResultsWindow(QWidget):
         canvas_layout.addWidget(self.drs_plot)
         layout.addWidget(canvas_container)
         widget.setLayout(layout)
-        self.tabs.addTab(widget, "DRS Map")
+        self.tabs.addTab(widget, "DRS map")
 
     def init_soc_tab(self):
         if self.res.SoC is None:
@@ -693,11 +852,12 @@ class ResultsWindow(QWidget):
 
         # ── SoC ──────────────────────────────────────────────────────────────
         plot_soc = pg.PlotWidget()
-        self._style_plot(plot_soc, "Battery State of Charge", "SoC", "%")
+        self._style_plot(plot_soc, "Battery state of charge", "SoC", "%")
+        self._add_crosshair(plot_soc, "SoC", "%")
 
         s_plot = self.res.s[:len(self.res.SoC)]
         soc_curve = plot_soc.plot(s_plot, self.res.SoC,
-                                  pen=pg.mkPen(self.C_SIM, width=3))
+                                  pen=pg.mkPen(self.C_SIM, width=2))
 
         dummy_zero = pg.PlotCurveItem(s_plot, np.zeros_like(s_plot), pen=None)
         fill_color = pg.mkColor(self.C_SIM)
@@ -724,6 +884,7 @@ class ResultsWindow(QWidget):
 
             plot_u = pg.PlotWidget()
             self._style_plot(plot_u, "Terminal voltage", "Voltage", "V")
+            self._add_crosshair(plot_u, "Voltage", "V")
             plot_u.setXLink(plot_soc)
 
             legend_u = plot_u.addLegend(
@@ -734,7 +895,7 @@ class ResultsWindow(QWidget):
             legend_u.setLabelTextColor('#0f172a')
 
             plot_u.plot(s_steps, U_t,
-                        pen=pg.mkPen(self.C_ENERGY, width=2.5),
+                        pen=pg.mkPen(self.C_ENERGY, width=1.5),
                         name="U_terminal")
 
             # OCV pack for reference
@@ -759,6 +920,7 @@ class ResultsWindow(QWidget):
 
             plot_i = pg.PlotWidget()
             self._style_plot(plot_i, "Current", "Current", "A")
+            self._add_crosshair(plot_i, "Current", "A")
             plot_i.setXLink(plot_soc)
 
             legend_i = plot_i.addLegend(
@@ -778,10 +940,10 @@ class ResultsWindow(QWidget):
             I_neg = np.where(I_stack <  0, I_stack, 0.0)  # regen / charge
 
             plot_i.plot(s_steps, I_pos,
-                        pen=pg.mkPen(self.C_ACC, width=2.5),
+                        pen=pg.mkPen(self.C_ACC, width=1.5),
                         name="Discharge")
             plot_i.plot(s_steps, I_neg,
-                        pen=pg.mkPen(self.C_REGEN, width=2.5),
+                        pen=pg.mkPen(self.C_REGEN, width=1.5),
                         name="Regen")
 
             layout.addWidget(plot_i)

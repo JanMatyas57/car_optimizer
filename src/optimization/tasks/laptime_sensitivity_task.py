@@ -76,7 +76,7 @@ class LaptimeSensitivityTask(SimulationTask):
                 res_minus = solver_minus.solve(ds=self.ds, init_cond=init_cond)
                 t_minus = res_minus.lap_time if res_minus.success else float('inf')
                 
-                # Calculate sensitivity (Central Difference)
+                # Calculate sensitivity 
                 # Sensitivity = dT / dP
                 if t_plus != float('inf') and t_minus != float('inf'):
                     # if base_value is 0, denominator is 2 * dx_abs

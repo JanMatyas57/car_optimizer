@@ -4,9 +4,7 @@ from PyQt6.QtWidgets import QDialog, QVBoxLayout, QLabel, QPushButton, QHBoxLayo
 from PyQt6.QtCore import Qt
 from scipy.signal import find_peaks
 
-# ==========================================
-# math helpers
-# ==========================================
+
 def get_tangent_vector(data, latitude_ref, longitude_ref):
     lon, lat = data["Longitude"], data["Latitude"]
     distances = np.sqrt((lon - longitude_ref)**2 + (lat - latitude_ref)**2)
@@ -27,9 +25,7 @@ def get_lap_indices(data, point, tangent_vector):
     minima_indices, _ = find_peaks(-np.abs(projected))
     return [i for i in minima_indices if (abs(rel_long[i]) + abs(rel_lat[i])) < 0.0001]
 
-# ==========================================
-# 1. start / finish selection dialog
-# ==========================================
+
 class StartFinishDialog(QDialog):
     def __init__(self, data, parent=None):
         super().__init__(parent)
@@ -74,12 +70,7 @@ class StartFinishDialog(QDialog):
         elif event.key() == Qt.Key.Key_Escape:
             self.reject()
 
-# ==========================================
-# 2. lap browser dialog
-# ==========================================
-# ==========================================
-# 2. lap browser dialog (single lap only)
-# ==========================================
+
 class LapSelectorDialog(QDialog):
     def __init__(self, data, laps_data, parent=None):
         super().__init__(parent)
@@ -149,9 +140,7 @@ def run_lap_selector(filtered_data, parent=None):
         
     return dlg2.selected_lap
 
-# ==========================================
-# 3. manual section selector
-# ==========================================
+
 class ManualLapDialog(QDialog):
     def __init__(self, data, parent=None):
         super().__init__(parent)
@@ -236,9 +225,7 @@ def manual_lap_selector(data, parent=None):
         return dlg.get_selection()
     return None
 
-# ==========================================
-# 4. drs zone editor
-# ==========================================
+
 class DRSEditorDialog(QDialog):
     def __init__(self, x, y, s, parent=None):
         super().__init__(parent)

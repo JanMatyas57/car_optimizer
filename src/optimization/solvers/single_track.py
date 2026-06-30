@@ -3,83 +3,70 @@ import numpy as np
 from src.core.car import Car
 from src.optimization.solvers.base_solver import BaseSolver, SolverResults, InitConditions
 
-#does not work, i leave it here only for reference, it was an attempt but ended up being too slow and not converging well, you might want to use some of this code if you want to implement a working MPCC in the future
-
+# does not work, kept for reference only (was too slow and didn't converge well)
 class SingleTrackSolver(BaseSolver):
-    def __init__(self, car, track):
-
+    DISPLAY_NAME = "Single Track"
+    def __init__(self, car, track, laps=1):
         super().__init__(car, track)
 
-    def solve(self, init_cond: InitConditions,init_guess=None, ds=1.0):
+    def solve(self, init_cond: InitConditions, init_guess=None, ds=1.0):
         opti = ca.Opti()
 
-        # =========================
-        # Parameters
-        # =========================
+        # parameters
         p_mass = opti.parameter()
         p_cl   = opti.parameter()
         p_cd   = opti.parameter()
         p_mu_x = opti.parameter()
         p_mu_y = opti.parameter()
 
-        # Set params values
+        # set parameter values
         opti.set_value(p_mass, self.car.mass)
         opti.set_value(p_cl,   self.car.cl)
         opti.set_value(p_cd,   self.car.cd)
         opti.set_value(p_mu_x, self.car.mu_x)
         opti.set_value(p_mu_y, self.car.mu_y)
 
-        # =========================
-        # Track data & Grid
-        # =========================
+        # track data and grid
         total_length = self.track.length
         N = int(np.round(total_length / ds))
         
         s_sim = np.linspace(0, total_length, N + 1)
-        ds_val = s_sim[1] - s_sim[0] # Actual uniform step
+        ds_val = s_sim[1] - s_sim[0] # actual uniform step
         
-        # Curvature along the path
-        kappa_grid = self.track.get_curvature(s_sim[:-1]) # Curvature at steps 0..N-1
+        # curvature along the path
+        kappa_grid = self.track.get_curvature(s_sim[:-1]) # curvature at steps 0..n-1
 
-        # =========================
-        # Variables (States at k=0..N)
-        # =========================
-        # Note: We use N+1 points for states, N for controls
-        vx  = opti.variable(N + 1) # Longitudinal speed
-        vy  = opti.variable(N + 1) # Lateral speed
-        r   = opti.variable(N + 1) # Yaw rate
-        n   = opti.variable(N + 1) # Lateral deviation
-        xi  = opti.variable(N + 1) # Heading error (psi - psi_track)
-        t   = opti.variable(N + 1) # Time
-        E   = opti.variable(N + 1) # Energy
+        # states at k=0..n (n+1 points)
+        vx  = opti.variable(N + 1) # longitudinal speed
+        vy  = opti.variable(N + 1) # lateral speed
+        r   = opti.variable(N + 1) # yaw rate
+        n   = opti.variable(N + 1) # lateral deviation
+        xi  = opti.variable(N + 1) # heading error
+        t   = opti.variable(N + 1) # time
+        E   = opti.variable(N + 1) # energy
 
-        # =========================
-        # Controls (at k=0..N-1)
-        # =========================
-        delta   = opti.variable(N) # Steering angle
-        F_acc   = opti.variable(N) # Drive force (at wheels)
-        F_brake = opti.variable(N) # Brake force (at wheels)
-        drs     = opti.variable(N) # DRS State
+        # controls at k=0..n-1 (n points)
+        delta   = opti.variable(N) # steering angle
+        F_acc   = opti.variable(N) # drive force
+        F_brake = opti.variable(N) # brake force
+        drs     = opti.variable(N) # drs state
 
-        # =========================
-        # Helper / Constants
-        # =========================
-        # Track limits (Tunnel)
+        # helper constraints
         track_width_limit = 0.5 
         opti.subject_to(opti.bounded(-track_width_limit, n, track_width_limit))
 
-        # Steering limits
+        # steering limits
         opti.subject_to(opti.bounded(-self.car.steeringAngle_max, delta, self.car.steeringAngle_max))
 
-        # Speed limit (avoid singularity at 0)
+        # speed limit to avoid singularity at 0
         opti.subject_to(vx >= 1.0) 
 
-        # Pedal constraints
+        # pedal constraints
         opti.subject_to(F_acc >= 0)
         opti.subject_to(F_brake <= 0)
 
-        # DRS Logic
-        use_drs_vec = False # Flag to control indexing inside loop
+        # drs logic
+        use_drs_vec = False
 
         if self.car.drs_allowed and self.track.drs is not None:
             drs_flag = self.track.get_drs_flag(s_sim[:-1])
@@ -90,20 +77,19 @@ class SingleTrackSolver(BaseSolver):
             use_drs_vec = True
         else:
             drs_ef = ca.DM.zeros(N)
-            cl_eff = p_cl # Scalar parameter
-            cd_eff = p_cd # Scalar parameter
+            cl_eff = p_cl
+            cd_eff = p_cd
             opti.subject_to(drs == 0)
-            use_drs_vec = False #
+            use_drs_vec = False
 
         opti.subject_to(drs >= 0)
         opti.subject_to(drs <= 1)
 
-        
-        # Slip limit for linear model validity (5 degrees in rad)
+        # slip limit for linear model validity (5 degrees in rad)
         alpha_limit = 5.0 * (np.pi / 180.0)
 
         for k in range(N):
-            # Current states
+            # current states
             vx_k = vx[k]
             vy_k = vy[k]
             r_k  = r[k]
@@ -111,15 +97,14 @@ class SingleTrackSolver(BaseSolver):
             xi_k = xi[k]
             t_k  = t[k]
             
-            # Current inputs
+            # current inputs
             delta_k   = delta[k]
             F_acc_k   = F_acc[k]
             F_brake_k = F_brake[k]
             
             curv_k = kappa_grid[k]
 
-            # 1. Force distribution
-            
+            # force distribution
             Ff_acc = self.car.power_dist * F_acc_k
             Fr_acc = (1.0 - self.car.power_dist) * F_acc_k
             
@@ -129,8 +114,7 @@ class SingleTrackSolver(BaseSolver):
             Fx_f = Ff_acc + Ff_brk
             Fx_r = Fr_acc + Fr_brk
 
-            # 2. Normal loads (fz)
-            
+            # normal loads (fz)
             if use_drs_vec:
                 cl_k = cl_eff[k]
                 cd_k = cd_eff[k]
@@ -138,7 +122,7 @@ class SingleTrackSolver(BaseSolver):
                 cl_k = cl_eff 
                 cd_k = cd_eff
 
-            # Fz calculations
+            # fz calculations
             fz_aero = 0.5 * self.car.rho * cl_k * vx_k**2
             fz_aero_f = fz_aero * (1 - self.car.cop)
             fz_aero_r = fz_aero * self.car.cop
@@ -146,41 +130,28 @@ class SingleTrackSolver(BaseSolver):
             Fz_f = self.car.fz_static_f + fz_aero_f
             Fz_r = self.car.fz_static_r + fz_aero_r
 
-            # 3. Slip angles - kinematics
-            # alpha_f = -atan2(...)
-            # alpha_r = -atan2(...)
-            
-            # Front slip
+            # slip angles kinematics
+            # front slip
             vy_f_kin = (vy_k + self.car.lf * r_k)
             alpha_f = -ca.atan2(
                 vy_f_kin * ca.cos(delta_k) - vx_k * ca.sin(delta_k),
                 vy_f_kin * ca.sin(delta_k) + vx_k * ca.cos(delta_k)
             )
 
-            # Rear slip
+            # rear slip
             vy_r_kin = (vy_k - self.car.lr * r_k)
             alpha_r = -ca.atan2(vy_r_kin, vx_k)
 
-            # 4. Lateral forces
-            # Fy = (alpha_deg / 5.0) * Fz * mu_y
-            # Convert alpha to deg: alpha * 180/pi
-            # Formula: alpha_rad * (180/pi) / 5.0 * Fz * mu_y
-            #        = alpha_rad * (36.0/pi) * Fz * mu_y
-            
+            # lateral forces
             Fy_f_lin = alpha_f * (36.0 / np.pi) * Fz_f * p_mu_y
             Fy_r_lin = alpha_r * (36.0 / np.pi) * Fz_r * p_mu_y
 
-            # 5. constraints
-            
-            # A) Hard limit on slip angle to keep linear model valid
+            # constraints
+            # hard limit on slip angle to keep linear model valid
             opti.subject_to(opti.bounded(-alpha_limit, alpha_f, alpha_limit))
             opti.subject_to(opti.bounded(-alpha_limit, alpha_r, alpha_limit))
 
-            # B) Friction ellipse 
-            # (Fx / Fx_max)^2 + (Fy / Fy_max)^2 <= 1
-            # Fx_max = mu_x * Fz, Fy_max = mu_y * Fz
-        
-            
+            # friction ellipse 
             mu_x_fz_f = p_mu_x * Fz_f
             mu_y_fz_f = p_mu_y * Fz_f
             
@@ -193,62 +164,49 @@ class SingleTrackSolver(BaseSolver):
             opti.subject_to(ellipse_f <= 1.0)
             opti.subject_to(ellipse_r <= 1.0)
 
-            
-            # Power limit: P = F * v <= P_max
+            # power limit: P = F * v <= P_max
             opti.subject_to( ((F_acc_k * vx_k) / self.car.power_eff)/self.car.power_max <= 1 )
             
-            # Regen limit
+            # regen limit
             opti.subject_to( ((-F_brake_k * vx_k) * self.car.regen_eff)/self.car.brake_max <= 1 )
 
-        
-            # Drag
+            # drag
             F_drag = 0.5 * self.car.rho * cd_k * vx_k**2 + self.car.fix_drag
 
-            # Body frame forces
-            # Sum forces in x and y direction
+            # body frame forces
             F_x_total = Fx_f * ca.cos(delta_k) - Fy_f_lin * ca.sin(delta_k) + Fx_r - F_drag
             F_y_total = Fx_f * ca.sin(delta_k) + Fy_f_lin * ca.cos(delta_k) + Fy_r_lin
             
-            # Moment
+            # moment
             M_z = self.car.lf * (Fx_f * ca.sin(delta_k) + Fy_f_lin * ca.cos(delta_k)) - self.car.lr * Fy_r_lin
 
-            # Time derivatives (dt)
+            # time derivatives
             dvx_dt = F_x_total / p_mass + r_k * vy_k
             dvy_dt = F_y_total / p_mass - r_k * vx_k
             dr_dt  = M_z / self.car.Iz
             
-            # Path scaling factor (Sf = dt/ds)
-            # d_psi/dt = r
-            # d_theta/dt = vx * curvature? No, d_theta/ds = curvature -> d_theta/dt = ds/dt * curvature
-            # We need Sf = 1 / (ds/dt)
-            # s_dot = (vx * cos(xi) - vy * sin(xi)) / (1 - n * curvature)
-            
-            # eps (in code) is xi (here). 
-           
+            # path scaling factor Sf = dt/ds
             s_dot_denom = (1.0 - n_k * curv_k)
             s_dot_num   = (vx_k * ca.cos(xi_k) - vy_k * ca.sin(xi_k))
             
-            # Avoid division by zero
+            # avoid division by zero
             ds_dt = s_dot_num / ca.fmax(s_dot_denom, 0.1)
             Sf = 1.0 / ds_dt  # dt/ds
 
-            # Spatial derivatives (d/ds = d/dt * dt/ds)
+            # spatial derivatives
             dvx_ds = dvx_dt * Sf
             dvy_ds = dvy_dt * Sf
             dr_ds  = dr_dt  * Sf
             dt_ds  = Sf
             
-            # Kinematics in path coordinates
-            # dn/dt = vx * sin(xi) + vy * cos(xi)
+            # kinematics in path coordinates
             dn_ds = (vx_k * ca.sin(xi_k) + vy_k * ca.cos(xi_k)) * Sf
-            
-            # dxi/ds = dpsi/ds - dtheta/ds = r * Sf - curvature
             dxi_ds = r_k * Sf - curv_k
 
-            # Energy
+            # energy
             dE_ds = ((F_acc_k / self.car.power_eff + F_brake_k * self.car.regen_eff) * Sf) / 3.6e6
 
-            # Euler Step
+            # euler step
             opti.subject_to(vx[k+1] == vx_k + dvx_ds * ds_val)
             opti.subject_to(vy[k+1] == vy_k + dvy_ds * ds_val)
             opti.subject_to(r[k+1]  == r_k  + dr_ds  * ds_val)
@@ -257,55 +215,37 @@ class SingleTrackSolver(BaseSolver):
             opti.subject_to(t[k+1]  == t_k  + dt_ds  * ds_val)
             opti.subject_to(E[k+1] == E[k] + dE_ds * ds_val)
 
-
-        # =========================
-        # Boundary Conditions
-        # =========================
-        # Start
+        # boundary conditions
         opti.subject_to(vx[0] == init_cond.v)
-        opti.subject_to(vy[0] == 0) # Assume 0 lateral speed at start
-        opti.subject_to(r[0]  == 0) # Assume 0 yaw rate at start (or match curvature)
+        opti.subject_to(vy[0] == 0) # 0 lateral speed at start
+        opti.subject_to(r[0]  == 0) # 0 yaw rate at start
         opti.subject_to(n[0]  == init_cond.n)
         opti.subject_to(xi[0] == init_cond.xi)
         opti.subject_to(t[0]  == init_cond.T)
         opti.subject_to(E[0]  == init_cond.E)
 
-        # Cyclic condition (if needed, enable for closed track)
-        # opti.subject_to(vx[0] == vx[-1])
-        
-        # Energy limit
+        # energy limit
         if self.car.energy_limit is not None:
             opti.subject_to(E[-1] <= self.car.energy_limit)
 
-        # =========================
-        # Objective function
-        # =========================
+        # objective function
         J_Time = t[-1]
         
-        # Regularization terms
-        # 1. Steering Rate (smooth steering)
-        # sum (delta_k - delta_k-1)^2
+        # regularization terms
+        # steering rate for smooth steering
         diff_delta = delta[1:] - delta[:-1]
         J_steer_rate = 7e-4 * ca.sumsqr(diff_delta)
         
-        # 2. Acceleration smoothness (throttle smoothing)
+        # acceleration smoothness
         diff_acc = F_acc[1:] - F_acc[:-1]
-        J_acc_smooth = 1e-3 * ca.sumsqr(diff_acc) / 1000.0 # Scale down force magnitude
+        J_acc_smooth = 1e-3 * ca.sumsqr(diff_acc) / 1000.0
 
-        # 3. Path deviation (stay close to center/opt line)
+        # path deviation
         J_path = 0.5 * ca.sumsqr(n)
-        #0.5 funguje mega dobre
 
-    
-        opti.minimize(J_Time+J_path+J_steer_rate)
-        #opti.minimize(J_Time)
+        opti.minimize(J_Time + J_path + J_steer_rate)
 
-        # =========================
-        # Initial guess 
-        # =========================
-   
-        # Mapping guess to variables
-       
+        # initial guess 
         g_vx = init_guess['v']
         g_n  = init_guess['n']
         g_xi = init_guess['xi']
@@ -315,10 +255,10 @@ class SingleTrackSolver(BaseSolver):
         g_facc  = init_guess['F_acc']
         g_fbrk  = init_guess['F_brake']
 
-        # set initial (handling minimal length mismatch if any)
+        # set initial values
         L_state = min(len(g_vx), N + 1)
         opti.set_initial(vx[:L_state], g_vx[:L_state])
-        opti.set_initial(vy[:L_state], 0.0) # Start with 0 slip
+        opti.set_initial(vy[:L_state], 0.0) # 0 slip initial guess
         opti.set_initial(n[:L_state],  g_n[:L_state])
         opti.set_initial(xi[:L_state], g_xi[:L_state])
         opti.set_initial(r[:L_state],  g_r[:L_state])
@@ -329,9 +269,7 @@ class SingleTrackSolver(BaseSolver):
         opti.set_initial(F_acc[:L_ctrl], g_facc[:L_ctrl])
         opti.set_initial(F_brake[:L_ctrl], g_fbrk[:L_ctrl])
 
-        # =========================
-        # Solver
-        # =========================
+        # solver config
         p_opts = {"expand": True}
         s_opts = {
             "max_iter": 3000, 
@@ -344,7 +282,7 @@ class SingleTrackSolver(BaseSolver):
         try:
             sol = opti.solve()
             
-            # --- Post processing / Sensitivities ---
+            # post processing and sensitivities
             L_lagrange = opti.f + ca.dot(opti.lam_g, opti.g)
             sens_m = sol.value(ca.jacobian(L_lagrange, p_mass))
             sens_cl = sol.value(ca.jacobian(L_lagrange, p_cl))
@@ -354,8 +292,7 @@ class SingleTrackSolver(BaseSolver):
             res_r  = sol.value(r)
             res_delta = sol.value(delta)
             
-            # Recompute alphas for output (k=0..N-1)
-            # (Simplified re-calculation for visualization)
+            # recompute slip angles for output visualization
             res_alpha_f = []
             res_alpha_r = []
             for k in range(N):
@@ -371,7 +308,7 @@ class SingleTrackSolver(BaseSolver):
                 success=True,
                 lap_time=sol.value(t[-1]),
                 t=sol.value(t),
-                v=sol.value(vx), # approx total speed
+                v=sol.value(vx),
                 s=s_sim,
                 f_acc=sol.value(F_acc) / self.car.power_eff,
                 f_brake=sol.value(F_brake) * self.car.regen_eff,
@@ -390,5 +327,4 @@ class SingleTrackSolver(BaseSolver):
 
         except RuntimeError as e:
             print(f"Solver failed: {e}")
-            # Return partial results (debug values) if available
             return SolverResults(False, 0.0, [], [], [], [], [], [], {}, mu_x=self.car.mu_x, mu_y=self.car.mu_y)

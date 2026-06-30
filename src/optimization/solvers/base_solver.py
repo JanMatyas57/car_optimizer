@@ -24,6 +24,7 @@ class SolverResults:
     kappa_car: np.ndarray = field(default_factory=lambda: np.array([]))  # Actual curvature
     delta: np.ndarray     = field(default_factory=lambda: np.array([]))  # Steering angle
     E: np.ndarray         = field(default_factory=lambda: np.array([]))  
+    E_pack: np.ndarray    = field(default_factory=lambda: np.array([]))  # Electrical energy from pack [kWh]
     drs_usage: np.ndarray = field(default_factory=lambda: np.array([]))
     alpha_f: np.ndarray = field(default_factory=lambda: np.array([]))  # Slip angle front
     alpha_r: np.ndarray = field(default_factory=lambda: np.array([]))  # Slip angle rear

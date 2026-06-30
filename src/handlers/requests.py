@@ -10,6 +10,10 @@ class BaseRequest:
 @dataclass
 class SingleLapRequest(BaseRequest):
     track_name: str
+    simulate_full_battery: bool = False
+    soc_power_mode: str = "lookup_table"   # "lookup_table" or "optimum"
+    battery_model: str = "ep95"            # "ep95" or "melasta_ad04"
+    use_warm_start: bool = False
 
 @dataclass
 class EnduranceRequest(BaseRequest):
@@ -20,6 +24,10 @@ class EnduranceRequest(BaseRequest):
 class LapMapTestRequest(BaseRequest):
     track_name: str
     laps: int
+    simulate_full_battery: bool = False
+    soc_power_mode: str = "lookup_table"
+    battery_model: str = "ep95"
+    use_warm_start: bool = False
 
 @dataclass
 class StrategyOptRequest(BaseRequest):
@@ -29,6 +37,7 @@ class StrategyOptRequest(BaseRequest):
     min_e_target: float
     max_e_target: float
     map_data: dict
+    battery_model: str = "ep95"
 
 @dataclass
 class DeploymentOptRequest(StrategyOptRequest):
@@ -56,4 +65,4 @@ class OptimizationRequest(BaseRequest):
 @dataclass
 class SensitivityRequest(BaseRequest):
     track_names: list
-    parameters: dict
+    parameters: dict
